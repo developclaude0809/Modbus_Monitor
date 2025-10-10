@@ -30,8 +30,7 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
-# ==================== Custom Scrollable ComboBox (Beautiful Version) ====================
-# ==================== Fixed Custom Scrollable ComboBox ====================
+# ==================== Custom Scrollable ComboBox ====================
 class ScrollableCombo(ctk.CTkFrame):
     """Beautiful scrollable dropdown with smooth animations and colorful highlighting"""
     
@@ -47,7 +46,7 @@ class ScrollableCombo(ctk.CTkFrame):
         # Configure grid
         self.grid_columnconfigure(0, weight=1)
         
-        # Main display entry (readonly) - yellow-white background with light-blue border
+        # Main display entry (readonly)
         self._entry = ctk.CTkEntry(
             self,
             width=self._width,
@@ -61,7 +60,7 @@ class ScrollableCombo(ctk.CTkFrame):
         )
         self._entry.grid(row=0, column=0, sticky="ew")
         
-        # Dropdown arrow button with light blue
+        # Dropdown arrow button
         self._btn = ctk.CTkButton(
             self,
             text="▼",
@@ -83,7 +82,7 @@ class ScrollableCombo(ctk.CTkFrame):
         # Set initial value
         self.set(self._current if self._current else (self._values[0] if self._values else ""))
         
-        # Mouse wheel support for cycling values
+        # Mouse wheel support
         self._entry.bind("<MouseWheel>", self._on_wheel, add="+")
         self._entry.bind("<Button-4>", self._on_wheel, add="+")
         self._entry.bind("<Button-5>", self._on_wheel, add="+")
@@ -136,16 +135,16 @@ class ScrollableCombo(ctk.CTkFrame):
         self._dropdown = ctk.CTkToplevel(self)
         self._dropdown.overrideredirect(True)
         
-        # CRITICAL FIX: Set transient and lift attributes
+        # Set transient and lift attributes
         self._dropdown.transient(self.winfo_toplevel())
-        self._dropdown.attributes('-topmost', True)  # Force on top
+        self._dropdown.attributes('-topmost', True)
         
-        # Calculate position - ensure widget is updated
+        # Calculate position
         self.update_idletasks()
         x = self.winfo_rootx()
         y = self.winfo_rooty() + self.winfo_height() + 2
         
-        # Dynamic height based on items (max 10 items visible)
+        # Dynamic height based on items
         item_height = 36
         visible_items = min(len(self._values), 10)
         height = min(visible_items * item_height + 10, self._max_dropdown_height)
@@ -159,11 +158,11 @@ class ScrollableCombo(ctk.CTkFrame):
         if x + dropdown_width > screen_width:
             x = screen_width - dropdown_width - 10
         if y + height > screen_height:
-            y = self.winfo_rooty() - height - 2  # Show above if not enough space below
+            y = self.winfo_rooty() - height - 2
         
         self._dropdown.geometry(f"{dropdown_width}x{height}+{x}+{y}")
         
-        # Scrollable frame with beautiful styling
+        # Scrollable frame
         self._scroll_frame = ctk.CTkScrollableFrame(
             self._dropdown,
             width=dropdown_width - 20,
@@ -172,14 +171,14 @@ class ScrollableCombo(ctk.CTkFrame):
         )
         self._scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Color palette for items
+        # Color palette
         colors = [
-            ("#3b82f6", "#2563eb"),  # Blue
-            ("#8b5cf6", "#7c3aed"),  # Purple
-            ("#ec4899", "#db2777"),  # Pink
-            ("#f59e0b", "#d97706"),  # Amber
-            ("#10b981", "#059669"),  # Green
-            ("#06b6d4", "#0891b2"),  # Cyan
+            ("#3b82f6", "#2563eb"),
+            ("#8b5cf6", "#7c3aed"),
+            ("#ec4899", "#db2777"),
+            ("#f59e0b", "#d97706"),
+            ("#10b981", "#059669"),
+            ("#06b6d4", "#0891b2"),
         ]
         
         self._buttons = []
@@ -205,7 +204,7 @@ class ScrollableCombo(ctk.CTkFrame):
             btn.pack(fill="x", padx=3, pady=2)
             self._buttons.append(btn)
         
-        # CRITICAL FIX: Force focus and lift after packing all widgets
+        # Force focus and lift
         self._dropdown.update_idletasks()
         self._dropdown.lift()
         self._dropdown.focus_force()
@@ -213,13 +212,10 @@ class ScrollableCombo(ctk.CTkFrame):
         # Bind events
         self._dropdown.bind("<FocusOut>", self._on_focus_out, add="+")
         self._dropdown.bind("<Escape>", lambda e: self._close_dropdown(), add="+")
-        
-        # Bind click outside to close
         self._dropdown.bind("<Button-1>", self._check_click_outside, add="+")
     
     def _on_focus_out(self, event):
         """Handle focus out event"""
-        # Small delay to allow button clicks to register
         self.after(100, self._close_dropdown)
     
     def _check_click_outside(self, event):
@@ -250,12 +246,10 @@ class ScrollableCombo(ctk.CTkFrame):
         except ValueError:
             current_idx = 0
         
-        # Determine scroll direction
         delta = getattr(event, "delta", 0)
         if delta == 0 and hasattr(event, "num"):
             delta = 120 if event.num == 4 else -120
         
-        # Cycle through values
         if delta > 0:
             new_idx = (current_idx - 1) % len(self._values)
         else:
@@ -348,7 +342,7 @@ class ModbusRTU:
             return False, "Function mismatch"
 
         # Extract data based on function code
-        if func == 0x03:  # Read holding registers
+        if func == 0x03:
             byte_count = response[2]
             expected_total = 5 + byte_count
             if len(response) != expected_total:
@@ -359,7 +353,7 @@ class ModbusRTU:
             values = [struct.unpack('>H', data[i:i+2])[0] for i in range(0, len(data), 2)]
             return True, values
 
-        if func == 0x06:  # Write single register
+        if func == 0x06:
             if len(response) != 8:
                 return False, f"Write response length mismatch: {len(response)}"
             addr, value = struct.unpack('>HH', response[2:6])
@@ -402,7 +396,7 @@ class SerialManager:
                 )
                 self.connected = True
 
-                # Calculate inter-frame delay (3.5 character times)
+                # Calculate inter-frame delay
                 char_time = 11.0 / max(baudrate, 300)
                 self.inter_frame_delay = max(3.5 * char_time, 0.00175)
                 
@@ -425,7 +419,7 @@ class SerialManager:
                 return False, f"Disconnect error: {e}"
 
     def _expected_response_length(self, func: int, buf: bytearray) -> int:
-        """Calculate expected response length based on function code"""
+        """Calculate expected response length"""
         if func == 0x06:
             return 8
         if func == 0x03:
@@ -444,16 +438,13 @@ class SerialManager:
         for attempt in range(self.max_retries):
             with self.lock:
                 try:
-                    # Inter-frame delay
                     time.sleep(self.inter_frame_delay)
                     
-                    # Clear buffers and send
                     self.port.reset_input_buffer()
                     self.port.reset_output_buffer()
                     self.port.write(request)
                     self.port.flush()
 
-                    # Read response with length awareness
                     start_time = time.time()
                     buffer = bytearray()
                     expected_len = 0
@@ -497,7 +488,7 @@ class ModbusControllerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Modbus RTU Controller")
-        self.geometry("1400x800")
+        self.geometry("1450x850")  # Increased height
 
         self.serial_mgr = SerialManager()
         self.addr_definitions: List[str] = []
@@ -511,12 +502,11 @@ class ModbusControllerApp(ctk.CTk):
 
     def _build_ui(self):
         """Build the main user interface"""
-        # Configure grid
-        self.grid_columnconfigure(0, weight=0)  # Left panel fixed
-        self.grid_columnconfigure(1, weight=1)  # Right panel expandable
-        self.grid_rowconfigure(0, weight=0)     # Header
-        self.grid_rowconfigure(1, weight=1)     # Content
-        self.grid_rowconfigure(2, weight=0)     # Status bar
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0)
 
         self._build_header()
         self._build_left_panel()
@@ -530,7 +520,6 @@ class ModbusControllerApp(ctk.CTk):
         header.grid_propagate(False)
         header.grid_columnconfigure(1, weight=1)
 
-        # Title
         title = ctk.CTkLabel(
             header, 
             text="🔧 Modbus RTU Controller",
@@ -538,7 +527,6 @@ class ModbusControllerApp(ctk.CTk):
         )
         title.grid(row=0, column=0, padx=30, pady=20, sticky="w")
 
-        # Connection status
         status_frame = ctk.CTkFrame(header, fg_color="transparent")
         status_frame.grid(row=0, column=2, padx=30, pady=20, sticky="e")
         
@@ -562,17 +550,15 @@ class ModbusControllerApp(ctk.CTk):
         left = ctk.CTkFrame(self, corner_radius=12, fg_color=("gray90", "gray17"))
         left.grid(row=1, column=0, padx=(20, 10), pady=(0, 15), sticky="nsew")
         
-        # Port Configuration
         config_frame = ctk.CTkFrame(left, corner_radius=10)
-        config_frame.pack(padx=20, pady=20, fill="x")
-        
+        config_frame.pack(padx=15, pady=15, fill="x")
+
         ctk.CTkLabel(
             config_frame,
             text="⚙️ Port Configuration",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(padx=20, pady=(20, 15), anchor="w")
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(padx=15, pady=(12, 8), anchor="w")
 
-        # Configuration fields
         fields = [
             ("COM Port:", "cmb_port", [""], self._create_port_row),
             ("Baud Rate:", "cmb_baud", ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'], None),
@@ -592,7 +578,6 @@ class ModbusControllerApp(ctk.CTk):
             else:
                 self._create_entry_row(config_frame, label_text, attr_name, values_or_default)
 
-        # Connection button
         self.btn_connection = ctk.CTkButton(
             left,
             text="📡 Connect",
@@ -604,18 +589,6 @@ class ModbusControllerApp(ctk.CTk):
         )
         self.btn_connection.pack(padx=20, pady=(0, 12), fill="x")
 
-        # Load definitions button
-        ctk.CTkButton(
-            left,
-            text="📂 Load Address Definitions",
-            command=self._load_definitions,
-            height=36,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color=("#8b5cf6", "#7c3aed"),
-            hover_color=("#7c3aed", "#6d28d9")
-        ).pack(padx=20, pady=(0, 12), fill="x")
-
-        # Polling button
         self.btn_polling = ctk.CTkButton(
             left,
             text="▶️ Start Polling",
@@ -630,26 +603,26 @@ class ModbusControllerApp(ctk.CTk):
     def _create_port_row(self, parent, label_text, attr_name):
         """Create port selection row with refresh button"""
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(padx=20, pady=8, fill="x")
-        
+        row.pack(padx=15, pady=4, fill="x")
+
         ctk.CTkLabel(
             row,
             text=label_text,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            width=140
-        ).pack(side="left", padx=(0, 10))
-        
-        combo = ScrollableCombo(row, values=[""], width=200)
-        combo.pack(side="left", padx=(0, 8))
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=110
+        ).pack(side="left", padx=(0, 8))
+
+        combo = ScrollableCombo(row, values=[""], width=180)
+        combo.pack(side="left", padx=(0, 6))
         setattr(self, attr_name, combo)
-        
+
         ctk.CTkButton(
             row,
             text="🔄",
             command=self._refresh_ports,
-            width=35,
-            height=32,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            width=30,
+            height=28,
+            font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=("#10b981", "#059669"),
             hover_color=("#059669", "#047857")
         ).pack(side="left")
@@ -657,16 +630,16 @@ class ModbusControllerApp(ctk.CTk):
     def _create_combo_row(self, parent, label_text, attr_name, values):
         """Create combobox configuration row"""
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(padx=20, pady=8, fill="x")
-        
+        row.pack(padx=15, pady=4, fill="x")
+
         ctk.CTkLabel(
             row,
             text=label_text,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            width=140
-        ).pack(side="left", padx=(0, 10))
-        
-        combo = ScrollableCombo(row, values=values, width=200)
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=110
+        ).pack(side="left", padx=(0, 8))
+
+        combo = ScrollableCombo(row, values=values, width=180)
         if attr_name == "cmb_baud":
             combo.set('9600')
         elif attr_name == "cmb_databits":
@@ -681,16 +654,16 @@ class ModbusControllerApp(ctk.CTk):
     def _create_entry_row(self, parent, label_text, attr_name, default_value):
         """Create entry field configuration row"""
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(padx=20, pady=8, fill="x")
-        
+        row.pack(padx=15, pady=4, fill="x")
+
         ctk.CTkLabel(
             row,
             text=label_text,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            width=140
-        ).pack(side="left", padx=(0, 10))
-        
-        entry = ctk.CTkEntry(row, width=200)
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=110
+        ).pack(side="left", padx=(0, 8))
+
+        entry = ctk.CTkEntry(row, width=180)
         entry.insert(0, default_value)
         entry.pack(side="left")
         setattr(self, attr_name, entry)
@@ -706,42 +679,44 @@ class ModbusControllerApp(ctk.CTk):
         header_frame = ctk.CTkFrame(right, fg_color="transparent")
         header_frame.grid(row=0, column=0, padx=25, pady=(25, 15), sticky="ew")
         header_frame.grid_columnconfigure(0, weight=1)
-        
+
         ctk.CTkLabel(
             header_frame,
             text="📊 Register Monitor",
             font=ctk.CTkFont(size=22, weight="bold")
         ).pack(side="left")
 
-        # Register table
+        ctk.CTkButton(
+            header_frame,
+            text="Load",
+            command=self._load_definitions,
+            width=70,
+            height=28,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=("#8b5cf6", "#7c3aed"),
+            hover_color=("#7c3aed", "#6d28d9")
+        ).pack(side="right")
+
+        # Register table with increased internal padding
         table_frame = ctk.CTkScrollableFrame(right, corner_radius=10)
-        table_frame.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        table_frame.grid(row=1, column=0, padx=20, pady=(0, 25), sticky="nsew")  # Increased bottom padding
         table_frame.grid_columnconfigure(1, weight=1)
 
-        # Table headers
-        headers = ["#", "Address", "Current Value", "Write Value (Press Enter)"]
-        for col, header in enumerate(headers):
-            ctk.CTkLabel(
-                table_frame,
-                text=header,
-                font=ctk.CTkFont(size=14, weight="bold")
-            ).grid(row=0, column=col, padx=15, pady=12, sticky="w")
-
-        # Create 10 register rows
-        self.reg_combos: List[ctk.CTkComboBox] = []
+        # Create 10 register rows with better spacing
+        self.reg_combos: List[ScrollableCombo] = []
         self.reg_value_labels: List[ctk.CTkLabel] = []
         self.reg_write_entries: List[ctk.CTkEntry] = []
 
         for i in range(10):
-            row = i + 1
-            
+            row = i
+
             # Row number
             ctk.CTkLabel(
                 table_frame,
                 text=f"{i+1:02d}",
                 font=ctk.CTkFont(size=13),
                 width=40
-            ).grid(row=row, column=0, padx=15, pady=10)
+            ).grid(row=row, column=0, padx=15, pady=12, sticky="w")  # Increased vertical padding
 
             # Address selector
             combo = ScrollableCombo(
@@ -750,7 +725,7 @@ class ModbusControllerApp(ctk.CTk):
                 width=350
             )
             combo.set("---")
-            combo.grid(row=row, column=1, padx=15, pady=10, sticky="ew")
+            combo.grid(row=row, column=1, padx=15, pady=12, sticky="ew")
             self.reg_combos.append(combo)
 
             # Current value display
@@ -760,7 +735,7 @@ class ModbusControllerApp(ctk.CTk):
                 font=ctk.CTkFont(size=13),
                 width=120
             )
-            value_label.grid(row=row, column=2, padx=15, pady=10)
+            value_label.grid(row=row, column=2, padx=15, pady=12)
             self.reg_value_labels.append(value_label)
 
             # Write value entry
@@ -770,9 +745,12 @@ class ModbusControllerApp(ctk.CTk):
                 width=220,
                 font=ctk.CTkFont(size=12)
             )
-            write_entry.grid(row=row, column=3, padx=15, pady=10, sticky="ew")
+            write_entry.grid(row=row, column=3, padx=15, pady=12, sticky="ew")
             write_entry.bind('<Return>', lambda e, idx=i: self._write_register(idx))
             self.reg_write_entries.append(write_entry)
+        
+        # Add extra padding at the bottom to ensure 10th row is fully visible
+        ctk.CTkLabel(table_frame, text="", height=30).grid(row=10, column=0, columnspan=4)
 
     def _build_status_bar(self):
         """Build bottom status bar"""
@@ -823,7 +801,6 @@ class ModbusControllerApp(ctk.CTk):
             ok, msg = self.serial_mgr.connect(port, baudrate, bytesize, parity, stopbits, timeout)
             
             if ok:
-                # Update UI on success
                 self.after(0, lambda: self._update_connection_ui(True))
                 self._update_status(f"✓ {msg} @ {baudrate} baud")
             else:
@@ -903,7 +880,6 @@ class ModbusControllerApp(ctk.CTk):
             self.addr_definitions = lines
             items = [f"{i:03d}_{name}" for i, name in enumerate(lines)]
 
-            # Update all combo boxes
             for combo in self.reg_combos:
                 combo.configure(values=items)
                 if items:
@@ -977,17 +953,14 @@ class ModbusControllerApp(ctk.CTk):
                         continue
                     
                     try:
-                        # Extract address from format "000_Name"
                         addr = int(addr_str.split('_', 1)[0])
                         
-                        # Build and send read request
                         request = ModbusRTU.read_holding_registers(slave_id, addr, 1)
                         ok, result = self.serial_mgr.transact(request, slave_id, 0x03, timeout=timeout)
                         
                         if ok and isinstance(result, list) and result:
                             value = result[0]
                             self.register_values[addr] = (value, time.time())
-                            # Thread-safe UI update
                             self.after(0, lambda idx=i, v=value: self._update_register_display(idx, v, None))
                         else:
                             error_msg = result if isinstance(result, str) else "Read failed"
@@ -1027,17 +1000,14 @@ class ModbusControllerApp(ctk.CTk):
             return
         
         try:
-            # Get configuration
             slave_id = int(self.ent_slave.get())
             timeout = int(self.ent_timeout.get()) / 1000.0
             
-            # Get address
             addr_str = self.reg_combos[index].get()
             if not addr_str or addr_str == "---":
                 raise ValueError("Please select an address")
             addr = int(addr_str.split('_', 1)[0])
 
-            # Get value
             value_str = self.reg_write_entries[index].get().strip()
             if not value_str:
                 raise ValueError("Please enter a value")
@@ -1046,14 +1016,12 @@ class ModbusControllerApp(ctk.CTk):
             if not (0 <= value <= 65535):
                 raise ValueError("Value must be between 0 and 65535")
 
-            # Build and send write request
             request = ModbusRTU.write_single_register(slave_id, addr, value)
             ok, result = self.serial_mgr.transact(request, slave_id, 0x06, timeout=timeout)
             
             if not ok:
                 raise Exception(result)
 
-            # Verify by reading back
             read_req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
             ok2, result2 = self.serial_mgr.transact(read_req, slave_id, 0x03, timeout=timeout)
             
@@ -1061,7 +1029,6 @@ class ModbusControllerApp(ctk.CTk):
             if ok2 and isinstance(result2, list) and result2:
                 displayed_value = result2[0]
 
-            # Update UI
             self.reg_write_entries[index].delete(0, 'end')
             self.reg_value_labels[index].configure(
                 text=str(displayed_value),
