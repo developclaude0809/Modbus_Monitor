@@ -376,9 +376,11 @@ class SearchableCombo(QtWidgets.QComboBox):
     def __init__(self, parent=None, half_width=True):
         super().__init__(parent)
         self.setEditable(True)
-        # Enable mouse wheel support with strong focus
+        # Enable mouse wheel support with strong focus and hover tracking
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setMouseTracking(True)
         self.view().installEventFilter(self)
+
         # Completer for searching
         self._completer = QtWidgets.QCompleter(self)
         self._completer.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
@@ -390,6 +392,9 @@ class SearchableCombo(QtWidgets.QComboBox):
         if half_width:
             self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
             self.setMaximumWidth(150)
+
+        # Hover state for scroll-on-hover
+        self._hovered = False
 
         # Unify ComboBox visuals with right-side inputs (with visible borders)
         self.setStyleSheet(
@@ -419,12 +424,26 @@ class SearchableCombo(QtWidgets.QComboBox):
         super().setModel(model)
         self._completer.setModel(model)
 
-    def wheelEvent(self, e: QtGui.QWheelEvent):
-        """Mouse wheel support - only when focused"""
-        if self.hasFocus():
-            super().wheelEvent(e)
+    def enterEvent(self, event: QtCore.QEvent):
+        self._hovered = True
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent):
+        self._hovered = False
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        # Scroll items when hovered or focused; do not open popup
+        if self._hovered or self.hasFocus():
+            cnt = self.count()
+            if cnt > 0:
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self.setCurrentIndex((self.currentIndex() - 1) % cnt)
+                elif delta < 0:
+                    self.setCurrentIndex((self.currentIndex() + 1) % cnt)
         else:
-            e.ignore()
+            event.ignore()
 
 
 class AddressCombo(QtWidgets.QComboBox):
@@ -456,12 +475,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(root)
         layout = QtWidgets.QGridLayout(root)
         layout.setColumnStretch(0, 0)
-        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(1, 0)
         layout.setRowStretch(1, 1)
 
         # Header
         header = QtWidgets.QWidget()
-        header.setStyleSheet(f"background:{Colors.BG_APP}; border:none;")
+        header.setStyleSheet(f"background:{Colors.COOL_GRAY}; border:none;")
         hbox = QtWidgets.QHBoxLayout(header)
         title = QtWidgets.QLabel("Modbus RTU Controller")
         title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:800; border:none;")
@@ -474,6 +493,9 @@ class MainWindow(QtWidgets.QMainWindow):
         left = QtWidgets.QFrame()
         left.setFrameShape(QtWidgets.QFrame.StyledPanel)
         left.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}} ")
+        # Fix requested panel size
+        left.setFixedSize(260, 650)
+        left.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         v = QtWidgets.QVBoxLayout(left)
         # Internal padding for left frame
         v.setContentsMargins(12, 12, 12, 12)
@@ -520,13 +542,31 @@ class MainWindow(QtWidgets.QMainWindow):
         row_widget("Stop Bits", self.cmbStopBits)
 
         # Buttons
-        self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
-        self.btnConnect.clicked.connect(self._toggle_connection)
-        v.addWidget(self.btnConnect)
+        # Row 1: Refresh and Connect side by side
+        btnRow1 = QtWidgets.QWidget()
+        btnRow1Layout = QtWidgets.QHBoxLayout(btnRow1)
+        btnRow1Layout.setContentsMargins(0, 0, 0, 0)
+        btnRow1Layout.setSpacing(8)
 
-        self.btnPolling = QtWidgets.QPushButton("Start Polling")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:{Colors.BTN_PRIMARY_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER};}}")
+        self.btnRefreshPorts = QtWidgets.QPushButton("Refresh")
+        self.btnRefreshPorts.setToolTip("Refresh COM ports")
+        self.btnRefreshPorts.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_SECONDARY_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnRefreshPorts.clicked.connect(self._refresh_ports)
+        btnRow1Layout.addWidget(self.btnRefreshPorts, 1)
+
+        self.btnConnect = QtWidgets.QPushButton("Connect")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnConnect.clicked.connect(self._toggle_connection)
+        btnRow1Layout.addWidget(self.btnConnect, 2)
+
+        v.addWidget(btnRow1)
+
+        # Row 2: Start Polling full width
+        self.btnPolling = QtWidgets.QPushButton("Start")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:#000000; font-weight:700; font-size:30px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER};}}")
         self.btnPolling.clicked.connect(self._toggle_polling)
         v.addWidget(self.btnPolling)
 
@@ -536,6 +576,9 @@ class MainWindow(QtWidgets.QMainWindow):
         right = QtWidgets.QFrame()
         right.setFrameShape(QtWidgets.QFrame.StyledPanel)
         right.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        # Fix requested panel size
+        right.setFixedSize(680, 650)
+        right.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         rv = QtWidgets.QVBoxLayout(right)
         # Internal padding for right frame
         rv.setContentsMargins(12, 12, 12, 12)
@@ -606,7 +649,7 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(0, 1)
 
         self.rowCombos: List[SearchableCombo] = []
         self.rowValues: List[QtWidgets.QLabel] = []
@@ -614,28 +657,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for i in range(10):
             r = i
-            labNo = QtWidgets.QLabel(f"{i+1:02d}")
-            labNo.setStyleSheet(f"color:{Colors.ROW_NUMBER_TEXT}; background:{Colors.ROW_NUMBER_BG}; padding:8px; border-radius:4px; font-weight:700;")
-            grid.addWidget(labNo, r, 0)
-
+            # No numeric label column; start with the address selector
             combo = SearchableCombo()
             combo.addItem("---")
             # Use same styling as COM port - no custom arrow styling
-            grid.addWidget(combo, r, 1)
+            grid.addWidget(combo, r, 0)
             self.rowCombos.append(combo)
 
             val = QtWidgets.QLabel("----")
             val.setMinimumWidth(100)
             val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
-            grid.addWidget(val, r, 2)
+            grid.addWidget(val, r, 1)
             self.rowValues.append(val)
 
             edit = QtWidgets.QLineEdit()
             edit.setPlaceholderText("Enter value (0-65535)")
             edit.setValidator(QtGui.QIntValidator(0, 65535, self))
             edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
+            edit.setFixedWidth(120)
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
-            grid.addWidget(edit, r, 3)
+            grid.addWidget(edit, r, 2)
             self.rowEdits.append(edit)
 
         grid.setRowStretch(10, 1)
@@ -653,19 +694,40 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(left,   1, 0)
         layout.addWidget(right,  1, 1)
 
+        # Keep references for size reporting
+        self.leftPanel = left
+        self.rightPanel = right
+
     # ---------- Status ----------
     def _set_status(self, msg: str):
         """Update status bar"""
         self.status.showMessage(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
+    def _report_panel_sizes(self):
+        """Report left/right panel sizes to the status bar"""
+        try:
+            lw, lh = (self.leftPanel.width(), self.leftPanel.height()) if hasattr(self, 'leftPanel') else (0, 0)
+            rw, rh = (self.rightPanel.width(), self.rightPanel.height()) if hasattr(self, 'rightPanel') else (0, 0)
+            self._set_status(f"Left {lw}x{lh} | Right {rw}x{rh}")
+        except Exception:
+            pass
+
+    def showEvent(self, e: QtGui.QShowEvent):
+        super().showEvent(e)
+        QtCore.QTimer.singleShot(0, self._report_panel_sizes)
+
+    def resizeEvent(self, e: QtGui.QResizeEvent):
+        super().resizeEvent(e)
+        self._report_panel_sizes()
+
     def _set_connected_ui(self, connected: bool):
         """Update UI for connection state"""
         if connected:
             self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; font-size:16px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
         else:
             self.btnConnect.setText("Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; font-size:16px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -827,8 +889,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
-            self.btnPolling.setText("Stop Polling")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnPolling.setText("Stop")
+            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; font-size:30px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
             self._set_status("Polling started")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
@@ -840,8 +902,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
-        self.btnPolling.setText("Start Polling")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:{Colors.BTN_PRIMARY_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+        self.btnPolling.setText("Start")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:#000000; font-weight:700; font-size:30px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
         self._set_status("Polling stopped")
 
     @QtCore.pyqtSlot(int, object, object)
