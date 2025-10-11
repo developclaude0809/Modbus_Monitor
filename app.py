@@ -1,6 +1,6 @@
 """
 Enhanced Modbus RTU Controller with PyQt5
-- Modern, dark-themed 9-color UI design
+- 9-color themed UI (Midnight Navy, Deep/ Sky Blue, Soft Yellow, Cream Tint, Cool Gray, Mist Blue, Rose Coral, Mint Glow)
 - Proper threading with QThread and signals
 - Modbus protocol support (0x03 Read, 0x06 Write)
 - Auto-polling with configurable intervals
@@ -27,47 +27,64 @@ except ImportError:
 
 
 # ==================== COLOR CONFIGURATION ====================
-# Easy to modify theme colors - just change these values!
+# New 9-color palette mapped to semantic tokens (dark UI)
 class Colors:
-    # Main theme colors (9 types - gradient from darkest to lightest)
-    CR1 = "#0F185B"      # Darkest blue
-    CR2 = "#1B288A"      # Dark blue
-    CR3 = "#344CB9"      # Primary blue
-    CR4 = "#5670D4"      # Medium-light blue
-    CR5 = "#7894E8"      # Light blue
-    CR6 = "#A8B9D7"      # Very light blue
-    CR7 = "#C4D1B8"      # Transitional beige
-    CR8 = "#D7C99A"      # Light gold/beige
-    CR9 = "#F2E4C7"      # Lightest gold/cream
+    # ===== BRAND PALETTE =====
+    MIDNIGHT_NAVY = "#0F172A"  # Main background — deep base
+    DEEP_BLUE = "#2563EB"      # Primary — buttons, active links, icons
+    SKY_BLUE = "#60A5FA"       # Highlight/hover — secondary actions, focus
+    SOFT_YELLOW = "#F4F27E"    # Accent — contrast text, warnings, highlights
+    CREAM_TINT = "#FFF5C2"     # Subtle highlight — glow, hover surfaces, text on dark
+    COOL_GRAY = "#1E293B"      # Card/surface — panels, modals
+    MIST_BLUE = "#38BDF8"      # Info/link — secondary text, borders
+    ROSE_CORAL = "#F87171"     # Error — alerts, destructive actions
+    MINT_GLOW = "#34D399"      # Success — confirmations, check icons
 
-    # Semantic colors (based on theme)
-    BACKGROUND_DARKEST = CR1     # Deepest background
-    BACKGROUND_DARK = CR2        # Dark background
-    BACKGROUND_MID = CR3         # Medium background
-    BACKGROUND_LIGHT = CR4       # Light background
-    BACKGROUND_LIGHTEST = CR5    # Lightest background
+    # ===== SEMANTIC COLORS =====
+    # Backgrounds (dark theme)
+    BG_APP = MIDNIGHT_NAVY      # App background
+    BG_PANEL = COOL_GRAY        # Panel/Card background
+    BG_INPUT = COOL_GRAY        # Inputs on dark surfaces
+    BG_BUTTON = DEEP_BLUE       # Primary button background
+    BG_HEADER = COOL_GRAY       # Header background
 
-    TEXT_PRIMARY = CR9           # Primary text color (lightest)
-    TEXT_SECONDARY = CR8         # Secondary text color
-    TEXT_TERTIARY = CR7          # Tertiary text color
-    TEXT_ACCENT = CR6            # Accent text color
+    # Text
+    TEXT_PRIMARY = CREAM_TINT   # Primary text on dark backgrounds
+    TEXT_ON_DARK = CREAM_TINT   # Text on header/dark elements
+    TEXT_LABEL = MIST_BLUE      # Labels and secondary text
 
-    BORDER_DARK = CR2            # Dark borders
-    BORDER_LIGHT = CR4           # Light borders
-    BORDER_ACCENT = CR6          # Accent borders
+    # Borders
+    BORDER_NORMAL = MIST_BLUE   # Subtle borders
+    BORDER_FOCUS = SKY_BLUE     # Focus/active state
+    BORDER_PANEL = MIST_BLUE    # Panel outlines
 
-    # Status colors
-    SUCCESS = "#22c55e"          # Green for success
-    ERROR = "#ef4444"            # Red for errors
-    WARNING = "#f59e0b"          # Orange for warnings
-    INFO = CR5                   # Info color (light blue)
+    # Buttons
+    BTN_PRIMARY_BG = DEEP_BLUE
+    BTN_PRIMARY_TEXT = CREAM_TINT
+    BTN_PRIMARY_HOVER = SKY_BLUE
 
-    # Button colors
-    BUTTON_CONNECT = SUCCESS
-    BUTTON_DISCONNECT = ERROR
-    BUTTON_PRIMARY = CR3         # Primary button
-    BUTTON_SECONDARY = "#8b5cf6" # Purple
-    BUTTON_HOVER = CR4           # Button hover state
+    BTN_DANGER_BG = ROSE_CORAL
+    BTN_DANGER_TEXT = MIDNIGHT_NAVY
+    BTN_DANGER_HOVER = "#ef4444"  # deeper coral for hover
+
+    BTN_SUCCESS_BG = MINT_GLOW
+    BTN_SUCCESS_TEXT = MIDNIGHT_NAVY
+    BTN_SUCCESS_HOVER = "#22c55e"
+
+    BTN_SECONDARY_BG = SKY_BLUE
+    BTN_SECONDARY_TEXT = MIDNIGHT_NAVY
+    BTN_SECONDARY_HOVER = MIST_BLUE
+
+    # Status indicators
+    STATUS_ERROR = ROSE_CORAL
+    STATUS_SUCCESS = MINT_GLOW
+    STATUS_NORMAL = SOFT_YELLOW
+
+    # Special elements
+    ROW_NUMBER_BG = DEEP_BLUE
+    ROW_NUMBER_TEXT = CREAM_TINT
+    VALUE_DISPLAY_BG = COOL_GRAY
+    VALUE_DISPLAY_TEXT = CREAM_TINT
 # ========================================================
 
 
@@ -324,7 +341,7 @@ class PollWorker(QtCore.QThread):
             try:
                 slave_id, timeout, interval = self.get_cfg()
             except Exception as e:
-                self.sigStatus.emit(f"✗ Invalid configuration: {e}")
+                self.sigStatus.emit(f"Invalid configuration: {e}")
                 time.sleep(1.0)
                 continue
 
@@ -356,7 +373,7 @@ class PollWorker(QtCore.QThread):
 class SearchableCombo(QtWidgets.QComboBox):
     """QComboBox with type-to-search (contains) and mouse wheel support - EDITABLE"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, half_width=True):
         super().__init__(parent)
         self.setEditable(True)
         # Enable mouse wheel support with strong focus
@@ -368,6 +385,11 @@ class SearchableCombo(QtWidgets.QComboBox):
         self._completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
         self._completer.setFilterMode(QtCore.Qt.MatchContains)
         self.setCompleter(self._completer)
+
+        # Set width to half if requested
+        if half_width:
+            self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+            self.setMaximumWidth(150)
 
     def setModel(self, model):
         """Override setModel to update completer"""
@@ -433,19 +455,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Header
         header = QtWidgets.QWidget()
-        header.setStyleSheet(f"background:{Colors.CR2}; border-bottom:2px solid {Colors.CR3};")
+        header.setStyleSheet(f"background:{Colors.BG_HEADER}; border:none;")
         hbox = QtWidgets.QHBoxLayout(header)
-        title = QtWidgets.QLabel("🔧 Modbus RTU Controller")
-        title.setStyleSheet(f"color:{Colors.CR9}; font-size:24px; font-weight:800;")
+        title = QtWidgets.QLabel("Modbus RTU Controller")
+        title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:800; border:none;")
         hbox.addWidget(title)
         hbox.addStretch()
 
-        self.lblConnDot = QtWidgets.QLabel("●")
-        self.lblConnDot.setStyleSheet(f"color:{Colors.ERROR}; font-size:22px;")
+        # Removed the connect light (dot) from header
         self.lblConn = QtWidgets.QLabel("Disconnected")
-        self.lblConn.setStyleSheet(f"color:{Colors.CR9}; font-weight:600; background:{Colors.CR1}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.CR4};")
+        self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.BG_PANEL}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
+        # Hide the right-top connection status label per request
+        self.lblConn.hide()
         wrap = QtWidgets.QHBoxLayout()
-        wrap.addWidget(self.lblConnDot)
         wrap.addWidget(self.lblConn)
         rightw = QtWidgets.QWidget()
         rightw.setLayout(wrap)
@@ -454,72 +476,58 @@ class MainWindow(QtWidgets.QMainWindow):
         # Left config panel
         left = QtWidgets.QFrame()
         left.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        left.setStyleSheet(f"QFrame{{background:{Colors.CR1}; border:2px solid {Colors.CR3}; border-radius:10px;}} QLabel{{color:{Colors.CR9};}} ")
+        left.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}} ")
         v = QtWidgets.QVBoxLayout(left)
-        v.setSpacing(4)  # Reduce spacing between fields (default is ~6-10)
+        v.setSpacing(3)
 
         def row_widget(label_text: str, widget: QtWidgets.QWidget):
             row = QtWidgets.QWidget()
             rh = QtWidgets.QHBoxLayout(row)
             lab = QtWidgets.QLabel(label_text)
             lab.setMinimumWidth(110)
-            lab.setStyleSheet("font-weight:700;")
+            lab.setAlignment(QtCore.Qt.AlignCenter)
+            lab.setStyleSheet(f"font-weight:700; color:{Colors.TEXT_LABEL};")
             rh.addWidget(lab)
             rh.addWidget(widget, 1)
             v.addWidget(row)
 
         # Port
-        self.cmbPort = SearchableCombo()
-        row_widget("COM Port:", self.cmbPort)
+        self.cmbPort = SearchableCombo(half_width=True)
+        row_widget("COM Port", self.cmbPort)
 
         # Baud
-        self.cmbBaud = SearchableCombo()
+        self.cmbBaud = SearchableCombo(half_width=True)
         for b in ['1200','2400','4800','9600','19200','38400','57600','115200']:
             self.cmbBaud.addItem(b)
         self.cmbBaud.setCurrentText('9600')
-        row_widget("Baud Rate:", self.cmbBaud)
+        row_widget("Baud Rate", self.cmbBaud)
 
         # Data bits
-        self.cmbDataBits = SearchableCombo()
+        self.cmbDataBits = SearchableCombo(half_width=True)
         self.cmbDataBits.addItems(['7','8'])
         self.cmbDataBits.setCurrentText('8')
-        row_widget("Data Bits:", self.cmbDataBits)
+        row_widget("Data Bits", self.cmbDataBits)
 
         # Parity
-        self.cmbParity = SearchableCombo()
+        self.cmbParity = SearchableCombo(half_width=True)
         self.cmbParity.addItems(['None (N)', 'Even (E)', 'Odd (O)'])
         self.cmbParity.setCurrentText('None (N)')
-        row_widget("Parity:", self.cmbParity)
+        row_widget("Parity", self.cmbParity)
 
         # Stop bits
-        self.cmbStopBits = SearchableCombo()
+        self.cmbStopBits = SearchableCombo(half_width=True)
         self.cmbStopBits.addItems(['1','2'])
         self.cmbStopBits.setCurrentText('1')
-        row_widget("Stop Bits:", self.cmbStopBits)
-
-        # Timeout
-        self.edTimeout = QtWidgets.QLineEdit("300")
-        self.edTimeout.setValidator(QtGui.QIntValidator(1, 60000, self))
-        row_widget("Timeout (ms):", self.edTimeout)
-
-        # Slave ID
-        self.edSlave = QtWidgets.QLineEdit("1")
-        self.edSlave.setValidator(QtGui.QIntValidator(1, 247, self))
-        row_widget("Slave ID:", self.edSlave)
-
-        # Poll interval
-        self.edPoll = QtWidgets.QLineEdit("200")
-        self.edPoll.setValidator(QtGui.QIntValidator(50, 600000, self))
-        row_widget("Poll Interval (ms):", self.edPoll)
+        row_widget("Stop Bits", self.cmbStopBits)
 
         # Buttons
-        self.btnConnect = QtWidgets.QPushButton("📡 Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BUTTON_CONNECT}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:#16a34a; border-color:{Colors.CR6};}}")
+        self.btnConnect = QtWidgets.QPushButton("Connect")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
         v.addWidget(self.btnConnect)
 
-        self.btnPolling = QtWidgets.QPushButton("▶️ Start Polling")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.CR3}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:{Colors.CR4}; border-color:{Colors.CR6};}}")
+        self.btnPolling = QtWidgets.QPushButton("Start Polling")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:{Colors.BTN_PRIMARY_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER};}}")
         self.btnPolling.clicked.connect(self._toggle_polling)
         v.addWidget(self.btnPolling)
 
@@ -528,17 +536,64 @@ class MainWindow(QtWidgets.QMainWindow):
         # Right monitor panel
         right = QtWidgets.QFrame()
         right.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        right.setStyleSheet(f"QFrame{{background:{Colors.CR1}; border:2px solid {Colors.CR3}; border-radius:10px;}} QLabel{{color:{Colors.CR9};}}")
+        right.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         rv = QtWidgets.QVBoxLayout(right)
 
-        # Load button (no title header)
-        headLayout = QtWidgets.QHBoxLayout()
-        headLayout.addStretch()
-        self.btnLoad = QtWidgets.QPushButton("Load Address File")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BUTTON_SECONDARY}; color:{Colors.CR9}; font-weight:700; padding:6px 12px; border:2px solid {Colors.CR5}; border-radius:6px; margin:8px;}} QPushButton:hover{{background:#7c3aed; border-color:{Colors.CR6};}}")
+        # Top row: ID, Timeout, Poll Interval in horizontal layout
+        topRow = QtWidgets.QWidget()
+        topLayout = QtWidgets.QHBoxLayout(topRow)
+        topLayout.setSpacing(8)
+        topLayout.setContentsMargins(8, 8, 8, 4)
+
+        # Common widths
+        LABEL_WIDTH = 80
+        INPUT_WIDTH = 70
+
+        # Slave ID
+        lblSlave = QtWidgets.QLabel("ID")
+        lblSlave.setFixedWidth(LABEL_WIDTH)
+        lblSlave.setAlignment(QtCore.Qt.AlignCenter)
+        lblSlave.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        self.edSlave = QtWidgets.QLineEdit("1")
+        self.edSlave.setValidator(QtGui.QIntValidator(1, 247, self))
+        self.edSlave.setFixedWidth(INPUT_WIDTH)
+        self.edSlave.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
+        topLayout.addWidget(lblSlave)
+        topLayout.addWidget(self.edSlave)
+
+        # Timeout
+        lblTimeout = QtWidgets.QLabel("Timeout")
+        lblTimeout.setFixedWidth(LABEL_WIDTH)
+        lblTimeout.setAlignment(QtCore.Qt.AlignCenter)
+        lblTimeout.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        self.edTimeout = QtWidgets.QLineEdit("300")
+        self.edTimeout.setValidator(QtGui.QIntValidator(1, 60000, self))
+        self.edTimeout.setFixedWidth(INPUT_WIDTH)
+        self.edTimeout.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
+        topLayout.addWidget(lblTimeout)
+        topLayout.addWidget(self.edTimeout)
+
+        # Poll interval
+        lblPoll = QtWidgets.QLabel("Poll")
+        lblPoll.setFixedWidth(LABEL_WIDTH)
+        lblPoll.setAlignment(QtCore.Qt.AlignCenter)
+        lblPoll.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        self.edPoll = QtWidgets.QLineEdit("200")
+        self.edPoll.setValidator(QtGui.QIntValidator(50, 600000, self))
+        self.edPoll.setFixedWidth(INPUT_WIDTH)
+        self.edPoll.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
+        topLayout.addWidget(lblPoll)
+        topLayout.addWidget(self.edPoll)
+
+        topLayout.addStretch()
+
+        # Load button
+        self.btnLoad = QtWidgets.QPushButton("Load")
+        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_SECONDARY_TEXT}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
         self.btnLoad.clicked.connect(self._load_definitions_dialog)
-        headLayout.addWidget(self.btnLoad)
-        rv.addLayout(headLayout)
+        topLayout.addWidget(self.btnLoad)
+
+        rv.addWidget(topRow)
 
         # Scroll area with 10 rows
         scroll = QtWidgets.QScrollArea()
@@ -554,7 +609,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(10):
             r = i
             labNo = QtWidgets.QLabel(f"{i+1:02d}")
-            labNo.setStyleSheet(f"color:{Colors.CR8}; background:{Colors.CR2}; padding:8px; border-radius:4px; font-weight:700;")
+            labNo.setStyleSheet(f"color:{Colors.ROW_NUMBER_TEXT}; background:{Colors.ROW_NUMBER_BG}; padding:8px; border-radius:4px; font-weight:700;")
             grid.addWidget(labNo, r, 0)
 
             combo = SearchableCombo()
@@ -565,14 +620,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             val = QtWidgets.QLabel("----")
             val.setMinimumWidth(100)
-            val.setStyleSheet(f"color:{Colors.CR9}; background:{Colors.CR2}; padding:8px; border:2px solid {Colors.CR4}; border-radius:4px; font-weight:600; font-size:14px;")
+            val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
             grid.addWidget(val, r, 2)
             self.rowValues.append(val)
 
             edit = QtWidgets.QLineEdit()
             edit.setPlaceholderText("Enter value (0-65535)")
             edit.setValidator(QtGui.QIntValidator(0, 65535, self))
-            edit.setStyleSheet(f"QLineEdit{{background:{Colors.CR2}; color:{Colors.CR9}; border:2px solid {Colors.CR4}; padding:6px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.CR5}; background:{Colors.CR3};}}")
+            edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
             grid.addWidget(edit, r, 3)
             self.rowEdits.append(edit)
@@ -600,17 +655,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_connected_ui(self, connected: bool):
         """Update UI for connection state"""
         if connected:
-            self.lblConnDot.setStyleSheet(f"color:{Colors.SUCCESS}; font-size:22px;")
             self.lblConn.setText("Connected")
-            self.lblConn.setStyleSheet(f"color:{Colors.CR9}; font-weight:600; background:{Colors.SUCCESS}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.CR5};")
-            self.btnConnect.setText("🔌 Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BUTTON_DISCONNECT}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:#dc2626; border-color:{Colors.CR6};}}")
+            self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.STATUS_SUCCESS}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
+            self.btnConnect.setText("Disconnect")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
         else:
-            self.lblConnDot.setStyleSheet(f"color:{Colors.ERROR}; font-size:22px;")
             self.lblConn.setText("Disconnected")
-            self.lblConn.setStyleSheet(f"color:{Colors.CR9}; font-weight:600; background:{Colors.CR1}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.CR4};")
-            self.btnConnect.setText("📡 Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BUTTON_CONNECT}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:#16a34a; border-color:{Colors.CR6};}}")
+            self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.BG_PANEL}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
+            self.btnConnect.setText("Connect")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -648,12 +701,12 @@ class MainWindow(QtWidgets.QMainWindow):
             ok, msg = self.serial_mgr.connect_port(port, baudrate, databits, parity, stopbits, timeout)
             if ok:
                 self._set_connected_ui(True)
-                self._set_status(f"✓ {msg} @ {baudrate} baud")
+                self._set_status(f"{msg} @ {baudrate} baud")
             else:
                 raise RuntimeError(msg)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Connection Error", str(e))
-            self._set_status(f"✗ Connection failed: {e}")
+            self._set_status(f"Connection failed: {e}")
 
     def _disconnect(self):
         """Disconnect from serial port"""
@@ -662,9 +715,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._stop_polling()
             self.serial_mgr.disconnect_port()
             self._set_connected_ui(False)
-            self._set_status("✓ Disconnected")
+            self._set_status("Disconnected")
         except Exception as e:
-            self._set_status(f"✗ Disconnect error: {e}")
+            self._set_status(f"Disconnect error: {e}")
 
     # ---------- Address Definitions ----------
     def _auto_load_definitions(self):
@@ -729,10 +782,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     combo.setCurrentIndex(0)
 
             fname = Path(filepath).name
-            self._set_status(f"✓ Loaded {len(lines)} addresses from {fname}")
+            self._set_status(f"Loaded {len(lines)} addresses from {fname}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to load file:\n{e}")
-            self._set_status(f"✗ Failed to load file: {e}")
+            self._set_status(f"Failed to load file: {e}")
 
     # ---------- Polling ----------
     def _toggle_polling(self):
@@ -772,12 +825,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
-            self.btnPolling.setText("⏸️ Stop Polling")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.ERROR}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:#dc2626; border-color:{Colors.CR6};}}")
-            self._set_status("✓ Polling started")
+            self.btnPolling.setText("Stop Polling")
+            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self._set_status("Polling started")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
-            self._set_status(f"✗ Failed to start polling: {e}")
+            self._set_status(f"Failed to start polling: {e}")
 
     def _stop_polling(self):
         """Stop auto-polling"""
@@ -785,20 +838,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
-        self.btnPolling.setText("▶️ Start Polling")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.CR3}; color:{Colors.CR9}; font-weight:700; padding:10px; border:2px solid {Colors.CR5}; border-radius:6px;}} QPushButton:hover{{background:{Colors.CR4}; border-color:{Colors.CR6};}}")
-        self._set_status("✓ Polling stopped")
+        self.btnPolling.setText("Start Polling")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:{Colors.BTN_PRIMARY_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+        self._set_status("Polling stopped")
 
     @QtCore.pyqtSlot(int, object, object)
     def _on_register_update(self, index: int, value: Optional[int], error: Optional[str]):
         """Update register display from polling thread"""
         if value is not None:
             self.rowValues[index].setText(str(value))
-            self.rowValues[index].setStyleSheet(f"color:{Colors.CR9}; background:{Colors.CR2}; padding:8px; border:2px solid {Colors.CR5}; border-radius:4px; font-weight:600; font-size:14px;")
+            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
         else:
             text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
             self.rowValues[index].setText(text)
-            self.rowValues[index].setStyleSheet(f"color:{Colors.ERROR}; background:{Colors.CR1}; padding:8px; border:2px solid {Colors.ERROR}; border-radius:4px; font-weight:600; font-size:14px;")
+            self.rowValues[index].setStyleSheet(f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
 
     # ---------- Write ----------
     def _write_register(self, index: int):
@@ -836,12 +889,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.rowEdits[index].clear()
             self.rowValues[index].setText(str(shown))
-            self.rowValues[index].setStyleSheet(f"color:{Colors.CR9}; background:{Colors.CR2}; padding:8px; border:2px solid {Colors.CR5}; border-radius:4px; font-weight:600; font-size:14px;")
-            self._set_status(f"✓ Write successful: Address {addr} = {shown}")
+            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
+            self._set_status(f"Write successful: Address {addr} = {shown}")
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Write Error", str(e))
-            self._set_status(f"✗ Write failed: {e}")
+            self._set_status(f"Write failed: {e}")
 
     # ---------- Close ----------
     def closeEvent(self, e: QtGui.QCloseEvent):
@@ -861,23 +914,105 @@ def main():
     """Application entry point"""
     app = QtWidgets.QApplication(sys.argv)
 
-    # Dark palette with custom theme - using all 9 colors
+    # Qt palette with 4-color theme
     app.setStyle("Fusion")
     palette = QtGui.QPalette()
-    palette.setColor(QtGui.QPalette.Window, QtGui.QColor(Colors.CR1))           # Darkest background
-    palette.setColor(QtGui.QPalette.WindowText, QtGui.QColor(Colors.CR9))      # Lightest text
-    palette.setColor(QtGui.QPalette.Base, QtGui.QColor(Colors.CR2))            # Input base color
-    palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(Colors.CR3))   # Alternate rows
-    palette.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(Colors.CR8))     # Tooltip background
-    palette.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(Colors.CR1))     # Tooltip text
-    palette.setColor(QtGui.QPalette.Text, QtGui.QColor(Colors.CR9))            # Primary text
-    palette.setColor(QtGui.QPalette.Button, QtGui.QColor(Colors.CR3))          # Button background
-    palette.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(Colors.CR9))      # Button text
+    palette.setColor(QtGui.QPalette.Window, QtGui.QColor(Colors.BG_APP))               # Main window background
+    palette.setColor(QtGui.QPalette.WindowText, QtGui.QColor(Colors.TEXT_PRIMARY))     # Main window text
+    palette.setColor(QtGui.QPalette.Base, QtGui.QColor(Colors.BG_INPUT))               # Input base color
+    palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(Colors.BG_PANEL))      # Alternate base
+    palette.setColor(QtGui.QPalette.ToolTipBase, QtGui.QColor(Colors.BG_PANEL))        # Tooltip background
+    palette.setColor(QtGui.QPalette.ToolTipText, QtGui.QColor(Colors.TEXT_PRIMARY))    # Tooltip text
+    palette.setColor(QtGui.QPalette.Text, QtGui.QColor(Colors.TEXT_PRIMARY))           # Text in inputs
+    palette.setColor(QtGui.QPalette.Button, QtGui.QColor(Colors.BTN_PRIMARY_BG))       # Button background
+    palette.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(Colors.BTN_PRIMARY_TEXT)) # Button text
 
-    palette.setColor(QtGui.QPalette.BrightText, QtGui.QColor(Colors.ERROR))    # Error text
-    palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(Colors.CR4))       # Selection highlight
-    palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(Colors.CR9)) # Selected text
+    palette.setColor(QtGui.QPalette.BrightText, QtGui.QColor(Colors.STATUS_ERROR))     # Error text
+    palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(Colors.SOFT_YELLOW))       # Selection highlight
+    palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(Colors.MIDNIGHT_NAVY))# Selected text on yellow
     app.setPalette(palette)
+
+    # Try to register bundled Nunito fonts if available
+    try:
+        fonts_dir = Path(os.path.join(os.path.dirname(__file__), 'assets', 'fonts'))
+        for fname in [
+            'Nunito-Regular.ttf',
+            'Nunito-SemiBold.ttf',
+            'Nunito-Bold.ttf',
+        ]:
+            fpath = fonts_dir / fname
+            if fpath.exists():
+                QtGui.QFontDatabase.addApplicationFont(str(fpath))
+        app.setFont(QtGui.QFont('Nunito'))
+    except Exception:
+        # Safe fallback: rely on system-installed fonts or stylesheet
+        pass
+
+    # Global stylesheet for cohesive dark theme and prettier widgets
+    app.setStyleSheet(
+        f"""
+        QWidget {{
+            background-color: {Colors.BG_APP};
+            color: {Colors.TEXT_PRIMARY};
+            font-family: Nunito, Segoe UI, Arial, Helvetica, sans-serif;
+            font-size: 14px;
+        }}
+
+        /* Panels */
+        QFrame {{
+            background-color: {Colors.BG_PANEL};
+            border: 1px solid {Colors.BORDER_PANEL};
+            border-radius: 10px;
+        }}
+
+        /* Inputs */
+        QLineEdit, QComboBox {{
+            background-color: {Colors.BG_INPUT};
+            color: {Colors.TEXT_PRIMARY};
+            border: 1px solid {Colors.BORDER_NORMAL};
+            border-radius: 6px;
+            padding: 6px 8px;
+            selection-background-color: {Colors.SOFT_YELLOW};
+            selection-color: {Colors.MIDNIGHT_NAVY};
+        }}
+        QLineEdit:focus, QComboBox:focus {{ border: 1px solid {Colors.BORDER_FOCUS}; }}
+        QComboBox QAbstractItemView {{
+            background: {Colors.BG_PANEL};
+            color: {Colors.TEXT_PRIMARY};
+            border: 1px solid {Colors.BORDER_NORMAL};
+            selection-background-color: {Colors.SOFT_YELLOW};
+            selection-color: {Colors.MIDNIGHT_NAVY};
+        }}
+
+        /* Buttons */
+        QPushButton {{
+            background-color: {Colors.BTN_PRIMARY_BG};
+            color: {Colors.BTN_PRIMARY_TEXT};
+            font-weight: 700;
+            border: 1px solid {Colors.BORDER_NORMAL};
+            border-radius: 8px;
+            padding: 8px 12px;
+        }}
+        QPushButton:hover {{
+            background-color: {Colors.BTN_PRIMARY_HOVER};
+            border-color: {Colors.BORDER_FOCUS};
+        }}
+
+        /* Header */
+        QToolTip {{
+            background-color: {Colors.BG_PANEL};
+            color: {Colors.TEXT_PRIMARY};
+            border: 1px solid {Colors.BORDER_NORMAL};
+        }}
+
+        /* Status bar */
+        QStatusBar {{
+            background: {Colors.BG_PANEL};
+            color: {Colors.TEXT_PRIMARY};
+            border-top: 1px solid {Colors.BORDER_PANEL};
+        }}
+        """
+    )
 
     w = MainWindow()
     w.show()
