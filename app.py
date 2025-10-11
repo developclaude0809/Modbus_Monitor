@@ -455,7 +455,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Header
         header = QtWidgets.QWidget()
-        header.setStyleSheet(f"background:{Colors.BG_HEADER}; border:none;")
+        header.setStyleSheet(f"background:{Colors.BG_APP}; border:none;")
         hbox = QtWidgets.QHBoxLayout(header)
         title = QtWidgets.QLabel("Modbus RTU Controller")
         title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:800; border:none;")
@@ -478,7 +478,9 @@ class MainWindow(QtWidgets.QMainWindow):
         left.setFrameShape(QtWidgets.QFrame.StyledPanel)
         left.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}} ")
         v = QtWidgets.QVBoxLayout(left)
-        v.setSpacing(3)
+        # Internal padding for left frame
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
 
         def row_widget(label_text: str, widget: QtWidgets.QWidget):
             row = QtWidgets.QWidget()
@@ -538,6 +540,9 @@ class MainWindow(QtWidgets.QMainWindow):
         right.setFrameShape(QtWidgets.QFrame.StyledPanel)
         right.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         rv = QtWidgets.QVBoxLayout(right)
+        # Internal padding for right frame
+        rv.setContentsMargins(12, 12, 12, 12)
+        rv.setSpacing(10)
 
         # Top row: ID, Timeout, Poll Interval in horizontal layout
         topRow = QtWidgets.QWidget()
@@ -600,6 +605,10 @@ class MainWindow(QtWidgets.QMainWindow):
         scroll.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         grid = QtWidgets.QGridLayout(inner)
+        # Internal padding and spacing inside the register grid
+        grid.setContentsMargins(8, 8, 8, 8)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
         grid.setColumnStretch(1, 1)
 
         self.rowCombos: List[SearchableCombo] = []
