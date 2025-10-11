@@ -44,7 +44,7 @@ class Colors:
     # Backgrounds (dark theme)
     BG_APP = MIDNIGHT_NAVY      # App background
     BG_PANEL = COOL_GRAY        # Panel/Card background
-    BG_INPUT = COOL_GRAY        # Inputs on dark surfaces
+    BG_INPUT = "#334155"        # Inputs on dark surfaces (lighter than panel)
     BG_BUTTON = DEEP_BLUE       # Primary button background
     BG_HEADER = COOL_GRAY       # Header background
 
@@ -391,6 +391,29 @@ class SearchableCombo(QtWidgets.QComboBox):
             self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
             self.setMaximumWidth(150)
 
+        # Unify ComboBox visuals with right-side inputs (with visible borders)
+        self.setStyleSheet(
+            f"""
+            QComboBox {{
+                background-color: {Colors.BG_INPUT};
+                color: {Colors.TEXT_PRIMARY};
+                border: 2px solid {Colors.BORDER_NORMAL};
+                border-radius: 6px;
+                padding: 6px 8px;
+            }}
+            QComboBox:focus {{
+                border: 2px solid {Colors.BORDER_FOCUS};
+            }}
+            QComboBox QAbstractItemView {{
+                background: {Colors.BG_INPUT};
+                color: {Colors.TEXT_PRIMARY};
+                border: 2px solid {Colors.BORDER_NORMAL};
+                selection-background-color: {Colors.SOFT_YELLOW};
+                selection-color: {Colors.MIDNIGHT_NAVY};
+            }}
+            """
+        )
+
     def setModel(self, model):
         """Override setModel to update completer"""
         super().setModel(model)
@@ -405,25 +428,8 @@ class SearchableCombo(QtWidgets.QComboBox):
 
 
 class AddressCombo(QtWidgets.QComboBox):
-    """Drop-down only combo box for address selection with mouse wheel support"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # NOT editable - pure drop-down selection only
-        self.setEditable(False)
-        # Enable mouse wheel support with strong focus
-        self.setFocusPolicy(QtCore.Qt.StrongFocus)
-        # Make it scrollable with large lists
-        self.setMaxVisibleItems(20)
-        # Set size policy
-        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-
-    def wheelEvent(self, e: QtGui.QWheelEvent):
-        """Mouse wheel support - scroll through addresses"""
-        if self.hasFocus():
-            super().wheelEvent(e)
-        else:
-            e.ignore()
+    """Deprecated: not used; preserved for backward compatibility."""
+    pass
 
 
 # ==================== Main Window ====================
@@ -462,16 +468,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hbox.addWidget(title)
         hbox.addStretch()
 
-        # Removed the connect light (dot) from header
-        self.lblConn = QtWidgets.QLabel("Disconnected")
-        self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.BG_PANEL}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
-        # Hide the right-top connection status label per request
-        self.lblConn.hide()
-        wrap = QtWidgets.QHBoxLayout()
-        wrap.addWidget(self.lblConn)
-        rightw = QtWidgets.QWidget()
-        rightw.setLayout(wrap)
-        hbox.addWidget(rightw)
+        # Removed the right-top connection status widget entirely
 
         # Left config panel
         left = QtWidgets.QFrame()
@@ -664,13 +661,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_connected_ui(self, connected: bool):
         """Update UI for connection state"""
         if connected:
-            self.lblConn.setText("Connected")
-            self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.STATUS_SUCCESS}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
             self.btnConnect.setText("Disconnect")
             self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
         else:
-            self.lblConn.setText("Disconnected")
-            self.lblConn.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; background:{Colors.BG_PANEL}; padding:6px 12px; border-radius:4px; border:2px solid {Colors.BORDER_NORMAL};")
             self.btnConnect.setText("Connect")
             self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
 
@@ -961,7 +954,7 @@ def main():
     app.setStyleSheet(
         f"""
         QWidget {{
-            background-color: {Colors.BG_APP};
+            background-color: {Colors.COOL_GRAY};
             color: {Colors.TEXT_PRIMARY};
             font-family: Nunito, Segoe UI, Arial, Helvetica, sans-serif;
             font-size: 14px;
