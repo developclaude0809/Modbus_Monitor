@@ -27,65 +27,73 @@ except ImportError:
 
 
 # ==================== COLOR CONFIGURATION ====================
-# New 9-color palette mapped to semantic tokens (dark UI)
-class Colors:
-    # ===== BRAND PALETTE =====
-    MIDNIGHT_NAVY = "#0F172A"  # Main background — deep base
-    DEEP_BLUE = "#2563EB"      # Primary — buttons, active links, icons
-    SKY_BLUE = "#60A5FA"       # Highlight/hover — secondary actions, focus
-    SOFT_YELLOW = "#F4F27E"    # Accent — contrast text, warnings, highlights
-    CREAM_TINT = "#FFF5C2"     # Subtle highlight — glow, hover surfaces, text on dark
-    COOL_GRAY = "#1E293B"      # Card/surface — panels, modals
-    MIST_BLUE = "#38BDF8"      # Info/link — secondary text, borders
-    ROSE_CORAL = "#F87171"     # Error — alerts, destructive actions
-    MINT_GLOW = "#34D399"      # Success — confirmations, check icons
+# Unified color palette sorted by RGB order for easy modification
 
-    # ===== SEMANTIC COLORS =====
-    # Backgrounds (dark theme)
-    BG_APP = MIDNIGHT_NAVY      # App background
-    BG_PANEL = COOL_GRAY        # Panel/Card background
-    BG_INPUT = "#334155"        # Inputs on dark surfaces (lighter than panel)
-    BG_BUTTON = DEEP_BLUE       # Primary button background
-    BG_HEADER = COOL_GRAY       # Header background
+class Colors:
+    # ------------------------------------------------------------
+    # 🎨 MASTER COLOR PALETTE (Sorted by RGB hex values)
+    # ------------------------------------------------------------
+    BTN_DANGER_BG     = "#A32424"
+    BTN_SUCCESS_HOVER = "#10B97B"
+    BTN_SUCCESS_BG    = "#059661"
+    MIDNIGHT_NAVY     = "#0F172A"
+    DEEP_BLUE         = "#2563EB"
+    COOL_GRAY         = "#1E293B"
+    SKY_BLUE          = "#60A5FA"
+    MIST_BLUE         = "#38BDF8"
+    MINT_GLOW         = "#34D399"
+    SOFT_YELLOW       = "#F4F27E"
+    CREAM_TINT        = "#FFF5C2"
+    ROSE_CORAL        = "#F87171"
+    BG_INPUT          = "#334155"
+    BTN_TEXT_COLOR    = "#FFFFFF"
+
+    # ------------------------------------------------------------
+    # 🌑 SEMANTIC COLORS — Contextual mapping for dark UI
+    # ------------------------------------------------------------
+
+    # Backgrounds
+    BG_APP         = MIDNIGHT_NAVY
+    BG_PANEL       = COOL_GRAY
+    BG_INPUT_COLOR = BG_INPUT
+    BG_BUTTON      = DEEP_BLUE
+    BG_HEADER      = COOL_GRAY
 
     # Text
-    TEXT_PRIMARY = CREAM_TINT   # Primary text on dark backgrounds
-    TEXT_ON_DARK = CREAM_TINT   # Text on header/dark elements
-    TEXT_LABEL = MIST_BLUE      # Labels and secondary text
+    TEXT_PRIMARY   = CREAM_TINT
+    TEXT_ON_DARK   = CREAM_TINT
+    TEXT_LABEL     = MIST_BLUE
 
     # Borders
-    BORDER_NORMAL = MIST_BLUE   # Subtle borders
-    BORDER_FOCUS = SKY_BLUE     # Focus/active state
-    BORDER_PANEL = MIST_BLUE    # Panel outlines
+    BORDER_NORMAL  = MIST_BLUE
+    BORDER_FOCUS   = SKY_BLUE
+    BORDER_PANEL   = MIST_BLUE
 
     # Buttons
-    BTN_PRIMARY_BG = DEEP_BLUE
-    BTN_PRIMARY_TEXT = CREAM_TINT
-    BTN_PRIMARY_HOVER = SKY_BLUE
+    BTN_PRIMARY_BG     = DEEP_BLUE
+    BTN_PRIMARY_TEXT   = CREAM_TINT
+    BTN_PRIMARY_COLOR  = BTN_TEXT_COLOR
+    BTN_PRIMARY_HOVER  = SKY_BLUE
 
-    BTN_DANGER_BG = ROSE_CORAL
-    BTN_DANGER_TEXT = MIDNIGHT_NAVY
-    BTN_DANGER_HOVER = "#ef4444"  # deeper coral for hover
+    BTN_DANGER_HOVER   = ROSE_CORAL
 
-    BTN_SUCCESS_BG = MINT_GLOW
-    BTN_SUCCESS_TEXT = MIDNIGHT_NAVY
-    BTN_SUCCESS_HOVER = "#22c55e"
+    BTN_SUCCESS_BG     = BTN_SUCCESS_BG
+    BTN_SUCCESS_HOVER  = BTN_SUCCESS_HOVER
 
-    BTN_SECONDARY_BG = SKY_BLUE
-    BTN_SECONDARY_TEXT = MIDNIGHT_NAVY
-    BTN_SECONDARY_HOVER = MIST_BLUE
+    BTN_SECONDARY_BG   = DEEP_BLUE
+    BTN_SECONDARY_HOVER= MIST_BLUE
 
-    # Status indicators
-    STATUS_ERROR = ROSE_CORAL
-    STATUS_SUCCESS = MINT_GLOW
-    STATUS_NORMAL = SOFT_YELLOW
+    # Status & Special Elements
+    STATUS_ERROR       = ROSE_CORAL
+    STATUS_SUCCESS     = MINT_GLOW
+    STATUS_NORMAL      = SOFT_YELLOW
 
-    # Special elements
-    ROW_NUMBER_BG = DEEP_BLUE
-    ROW_NUMBER_TEXT = CREAM_TINT
-    VALUE_DISPLAY_BG = COOL_GRAY
+    ROW_NUMBER_BG      = DEEP_BLUE
+    ROW_NUMBER_TEXT    = CREAM_TINT
+
+    VALUE_DISPLAY_BG   = COOL_GRAY
     VALUE_DISPLAY_TEXT = CREAM_TINT
-# ========================================================
+# =============================================================
 
 
 # ==================== Modbus RTU ====================
@@ -480,14 +488,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Header
         header = QtWidgets.QWidget()
+        header.setFixedHeight(50)  # Set specific height in pixels
         header.setStyleSheet(f"background:{Colors.COOL_GRAY}; border:none;")
         hbox = QtWidgets.QHBoxLayout(header)
+        hbox.setContentsMargins(8, 4, 8, 4)
         title = QtWidgets.QLabel("Modbus RTU Controller")
-        title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:800; border:none;")
+        title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:700; border:none;")
         hbox.addWidget(title)
         hbox.addStretch()
 
-        # Removed the right-top connection status widget entirely
 
         # Left config panel
         left = QtWidgets.QFrame()
@@ -551,24 +560,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnRefreshPorts = QtWidgets.QPushButton("Refresh")
         self.btnRefreshPorts.setToolTip("Refresh COM ports")
         self.btnRefreshPorts.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_SECONDARY_TEXT}; font-weight:700; padding:10px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:10px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
         )
         self.btnRefreshPorts.clicked.connect(self._refresh_ports)
         btnRow1Layout.addWidget(self.btnRefreshPorts, 1)
 
         self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
         btnRow1Layout.addWidget(self.btnConnect, 2)
 
         v.addWidget(btnRow1)
-
-        # Row 2: Start Polling full width
-        self.btnPolling = QtWidgets.QPushButton("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:#000000; font-weight:700; font-size:30px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER};}}")
-        self.btnPolling.clicked.connect(self._toggle_polling)
-        v.addWidget(self.btnPolling)
 
         v.addStretch()
 
@@ -584,11 +587,17 @@ class MainWindow(QtWidgets.QMainWindow):
         rv.setContentsMargins(12, 12, 12, 12)
         rv.setSpacing(10)
 
-        # Top row: ID, Timeout, Poll Interval in horizontal layout
+        # Top row: Start button, ID, Timeout, Poll Interval in horizontal layout
         topRow = QtWidgets.QWidget()
         topLayout = QtWidgets.QHBoxLayout(topRow)
         topLayout.setSpacing(8)
         topLayout.setContentsMargins(8, 8, 8, 4)
+
+        # Start/Stop Polling button
+        self.btnPolling = QtWidgets.QPushButton("Start")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnPolling.clicked.connect(self._toggle_polling)
+        topLayout.addWidget(self.btnPolling)
 
         # Common widths
         LABEL_WIDTH = 80
@@ -634,7 +643,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Load button
         self.btnLoad = QtWidgets.QPushButton("Load")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_SECONDARY_TEXT}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
+        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
         self.btnLoad.clicked.connect(self._load_definitions_dialog)
         topLayout.addWidget(self.btnLoad)
 
@@ -724,10 +733,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update UI for connection state"""
         if connected:
             self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; font-size:16px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}")
         else:
             self.btnConnect.setText("Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_SUCCESS_TEXT}; font-weight:700; font-size:16px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -890,7 +899,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.start()
 
             self.btnPolling.setText("Stop")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_DANGER_TEXT}; font-weight:700; font-size:30px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}")
             self._set_status("Polling started")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
@@ -903,7 +912,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.wait(1500)
             self.worker = None
         self.btnPolling.setText("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_PRIMARY_BG}; color:#000000; font-weight:700; font-size:30px; padding:10px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_PRIMARY_HOVER}; border-color:{Colors.BORDER_FOCUS};}}")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self._set_status("Polling stopped")
 
     @QtCore.pyqtSlot(int, object, object)
