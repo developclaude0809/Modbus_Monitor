@@ -1158,6 +1158,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.worker and self.worker.isRunning():
             self._stop_polling()
         else:
+            # Ensure plotting is stopped before starting polling
+            if self.plot_worker and self.plot_worker.isRunning():
+                self._stop_plotting()
             self._start_polling()
 
     def _start_polling(self):
@@ -1276,6 +1279,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         try:
+            # Ensure polling is stopped before starting plotting
+            if self.worker and self.worker.isRunning():
+                self._stop_polling()
             # Clear previous data
             for ch_data in self.plot_data:
                 ch_data['time'].clear()
