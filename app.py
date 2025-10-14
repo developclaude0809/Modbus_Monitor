@@ -812,7 +812,7 @@ class MainWindow(QtWidgets.QMainWindow):
         LABEL_WIDTH = 80
         INPUT_WIDTH = 70
 
-        # Slave ID
+        # Slave ID (moved to UART panel after COM Port)
         lblSlave = QtWidgets.QLabel("ID")
         lblSlave.setFixedWidth(LABEL_WIDTH)
         lblSlave.setAlignment(QtCore.Qt.AlignCenter)
@@ -821,8 +821,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edSlave.setValidator(QtGui.QIntValidator(1, 247, self))
         self.edSlave.setFixedWidth(INPUT_WIDTH)
         self.edSlave.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
-        topLayout.addWidget(lblSlave)
-        topLayout.addWidget(self.edSlave)
+        # Insert into UART layout right after COM Port widgets
+        uart_layout.insertWidget(2, lblSlave)
+        uart_layout.insertWidget(3, self.edSlave)
 
         # Timeout and Poll defaults (ms) from centralized variables
         self.edTimeout = QtWidgets.QLineEdit(str(DEFAULT_TIMEOUT_MS))
@@ -833,11 +834,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         topLayout.addStretch()
 
-        # Load button
-        self.btnLoad = QtWidgets.QPushButton("Load")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
-        self.btnLoad.clicked.connect(self._load_definitions_dialog)
-        topLayout.addWidget(self.btnLoad)
+        # Load button will be moved below the grid (bottom-left)
 
         rv.addWidget(topRow)
 
@@ -863,7 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(10):
             r = i
             # No numeric label column; start with the address selector
-            combo = SearchableCombo()
+            combo = SearchableCombo(half_width=False)
             combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             combo.addItem("---")
             # Use same styling as COM port - no custom arrow styling
@@ -889,6 +886,17 @@ class MainWindow(QtWidgets.QMainWindow):
         inner.setLayout(grid)
         scroll.setWidget(inner)
         rv.addWidget(scroll)
+
+        # Bottom-left Load button (below 10th row)
+        bottomBar = QtWidgets.QHBoxLayout()
+        bottomBar.setContentsMargins(0, 0, 0, 0)
+        bottomBar.setSpacing(0)
+        self.btnLoad = QtWidgets.QPushButton("Load")
+        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
+        self.btnLoad.clicked.connect(self._load_definitions_dialog)
+        bottomBar.addWidget(self.btnLoad)
+        bottomBar.addStretch(1)
+        rv.addLayout(bottomBar)
 
         # Status bar
         self.status = QtWidgets.QStatusBar()
@@ -924,7 +932,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             combo = SearchableCombo(half_width=False)
             combo.addItem("---")
-            combo.setFixedWidth(140)
+            combo.setFixedWidth(240)
             combo.setFixedHeight(35)
 
             row = i // 2  # 0,0,1,1 -> rows 0,0,1,1
@@ -942,7 +950,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.btnDraw)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(6, 4), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(6, 5), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
