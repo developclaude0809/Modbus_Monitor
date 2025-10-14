@@ -18,12 +18,27 @@ from typing import Optional, Tuple, Any, List
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+# ==================== DEFAULTS ====================
+# Centralized defaults for timing values (milliseconds)
+DEFAULT_TIMEOUT_MS = 40
+DEFAULT_POLL_INTERVAL_MS = 50
+
 # ---------- pyserial ----------
 try:
     import serial
     import serial.tools.list_ports
 except ImportError:
     sys.exit("Missing pyserial. Please install: pip install pyserial")
+
+# ---------- matplotlib for plotting ----------
+try:
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+    import matplotlib.pyplot as plt
+except ImportError:
+    sys.exit("Missing matplotlib. Please install: pip install matplotlib")
 
 
 # ==================== COLOR CONFIGURATION ====================
@@ -377,6 +392,60 @@ class PollWorker(QtCore.QThread):
             time.sleep(interval)
 
 
+# ==================== Plot Worker ====================
+class PlotWorker(QtCore.QThread):
+    """Background thread for plotting data acquisition at 80ms intervals"""
+
+    sigData = QtCore.pyqtSignal(int, object, object)  # channel_index, value|None, timestamp|None
+    sigStatus = QtCore.pyqtSignal(str)
+
+    def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_cfg_callable, parent=None):
+        super().__init__(parent)
+        self.serial_mgr = serial_mgr
+        self.get_addresses = get_addresses_callable  # returns list of 4 addresses (int or None)
+        self.get_cfg = get_cfg_callable              # returns (slave_id:int, timeout:float)
+        self._running = True
+
+    def stop(self):
+        """Stop the plot worker thread"""
+        self._running = False
+
+    def run(self):
+        """Main data acquisition loop - 80ms interval"""
+        while self._running:
+            try:
+                slave_id, timeout = self.get_cfg()
+                addresses = self.get_addresses()  # List of 4 addresses
+            except Exception as e:
+                self.sigStatus.emit(f"Invalid configuration: {e}")
+                time.sleep(1.0)
+                continue
+
+            timestamp = time.time()
+
+            # Read all 4 channels
+            for i, addr in enumerate(addresses):
+                if not self._running:
+                    break
+
+                if addr is None:
+                    continue
+
+                try:
+                    req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
+                    ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
+                    if ok and isinstance(result, list) and result:
+                        self.sigData.emit(i, int(result[0]), timestamp)
+                    else:
+                        err = result if isinstance(result, str) else "Read failed"
+                        self.sigData.emit(i, None, timestamp)
+                except Exception as e:
+                    self.sigData.emit(i, None, timestamp)
+
+            # 80ms interval
+            time.sleep(0.08)
+
+
 # ==================== UI Helpers ====================
 class SearchableCombo(QtWidgets.QComboBox):
     """
@@ -608,11 +677,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Modbus RTU Controller (PyQt5)")
-        self.resize(1200, 780)
+        self.resize(1400, 750)
 
         self.serial_mgr = SerialManager(self)
         self.addr_items: List[str] = []  # ["000_name", ...]
         self.worker: Optional[PollWorker] = None
+        self.plot_worker: Optional[PlotWorker] = None
+
+        # Central timing state (ms)
+        self.timeout_ms = DEFAULT_TIMEOUT_MS
+        self.poll_interval_ms = DEFAULT_POLL_INTERVAL_MS
+
+        # Plot data storage: 4 channels, each with (timestamps, values)
+        self.plot_data = [
+            {'time': [], 'value': []} for _ in range(4)
+        ]
+        self.plot_start_time = 0.0
 
         self._build_ui()
         self._auto_load_definitions()
@@ -623,106 +703,93 @@ class MainWindow(QtWidgets.QMainWindow):
         """Build the user interface"""
         root = QtWidgets.QWidget()
         self.setCentralWidget(root)
-        layout = QtWidgets.QGridLayout(root)
-        layout.setColumnStretch(0, 0)
-        layout.setColumnStretch(1, 0)
-        layout.setRowStretch(1, 1)
+        main_layout = QtWidgets.QVBoxLayout(root)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
 
-        # Header
-        header = QtWidgets.QWidget()
-        header.setFixedHeight(50)  # Set specific height in pixels
-        header.setStyleSheet(f"background:{Colors.COOL_GRAY}; border:none;")
-        hbox = QtWidgets.QHBoxLayout(header)
-        hbox.setContentsMargins(8, 4, 8, 4)
-        title = QtWidgets.QLabel("Modbus RTU Controller")
-        title.setStyleSheet(f"color:{Colors.TEXT_ON_DARK}; font-size:24px; font-weight:700; border:none;")
-        hbox.addWidget(title)
-        hbox.addStretch()
-
-
-        # Left config panel
-        left = QtWidgets.QFrame()
-        left.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        left.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}} ")
-        # Fix requested panel size
-        left.setFixedSize(260, 650)
-        left.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        v = QtWidgets.QVBoxLayout(left)
-        # Internal padding for left frame
-        v.setContentsMargins(12, 12, 12, 12)
-        v.setSpacing(10)
-
-        def row_widget(label_text: str, widget: QtWidgets.QWidget):
-            row = QtWidgets.QWidget()
-            rh = QtWidgets.QHBoxLayout(row)
-            lab = QtWidgets.QLabel(label_text)
-            lab.setMinimumWidth(110)
-            lab.setAlignment(QtCore.Qt.AlignCenter)
-            lab.setStyleSheet(f"font-weight:700; color:{Colors.TEXT_LABEL};")
-            rh.addWidget(lab)
-            rh.addWidget(widget, 1)
-            v.addWidget(row)
+        # ========== TOP: UART Settings Panel ==========
+        uart_panel = QtWidgets.QFrame()
+        uart_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        uart_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        uart_layout = QtWidgets.QHBoxLayout(uart_panel)
+        uart_layout.setContentsMargins(12, 12, 12, 12)
+        uart_layout.setSpacing(10)
 
         # Port
-        self.cmbPort = SearchableCombo(half_width=True)
-        row_widget("COM Port", self.cmbPort)
+        lbl_port = QtWidgets.QLabel("COM Port")
+        lbl_port.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        uart_layout.addWidget(lbl_port)
+        self.cmbPort = SearchableCombo(half_width=False)
+        self.cmbPort.setMinimumWidth(120)
+        uart_layout.addWidget(self.cmbPort)
 
         # Baud
-        self.cmbBaud = SearchableCombo(half_width=True)
+        lbl_baud = QtWidgets.QLabel("Baud")
+        lbl_baud.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        uart_layout.addWidget(lbl_baud)
+        self.cmbBaud = SearchableCombo(half_width=False)
+        self.cmbBaud.setMinimumWidth(100)
         for b in ['1200','2400','4800','9600','19200','38400','57600','115200']:
             self.cmbBaud.addItem(b)
         self.cmbBaud.setCurrentText('9600')
-        row_widget("Baud Rate", self.cmbBaud)
+        uart_layout.addWidget(self.cmbBaud)
 
         # Data bits
-        self.cmbDataBits = SearchableCombo(half_width=True)
+        lbl_databits = QtWidgets.QLabel("Data Bits")
+        lbl_databits.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        uart_layout.addWidget(lbl_databits)
+        self.cmbDataBits = SearchableCombo(half_width=False)
+        self.cmbDataBits.setMinimumWidth(60)
         self.cmbDataBits.addItems(['7','8'])
         self.cmbDataBits.setCurrentText('8')
-        row_widget("Data Bits", self.cmbDataBits)
+        uart_layout.addWidget(self.cmbDataBits)
 
         # Parity
-        self.cmbParity = SearchableCombo(half_width=True)
+        lbl_parity = QtWidgets.QLabel("Parity")
+        lbl_parity.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        uart_layout.addWidget(lbl_parity)
+        self.cmbParity = SearchableCombo(half_width=False)
+        self.cmbParity.setMinimumWidth(100)
         self.cmbParity.addItems(['None (N)', 'Even (E)', 'Odd (O)'])
         self.cmbParity.setCurrentText('None (N)')
-        row_widget("Parity", self.cmbParity)
+        uart_layout.addWidget(self.cmbParity)
 
         # Stop bits
-        self.cmbStopBits = SearchableCombo(half_width=True)
+        lbl_stopbits = QtWidgets.QLabel("Stop Bits")
+        lbl_stopbits.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+        uart_layout.addWidget(lbl_stopbits)
+        self.cmbStopBits = SearchableCombo(half_width=False)
+        self.cmbStopBits.setMinimumWidth(60)
         self.cmbStopBits.addItems(['1','2'])
         self.cmbStopBits.setCurrentText('1')
-        row_widget("Stop Bits", self.cmbStopBits)
+        uart_layout.addWidget(self.cmbStopBits)
 
-        # Buttons
-        # Row 1: Refresh and Connect side by side
-        btnRow1 = QtWidgets.QWidget()
-        btnRow1Layout = QtWidgets.QHBoxLayout(btnRow1)
-        btnRow1Layout.setContentsMargins(0, 0, 0, 0)
-        btnRow1Layout.setSpacing(8)
+        uart_layout.addStretch()
 
+        # Refresh button
         self.btnRefreshPorts = QtWidgets.QPushButton("Refresh")
         self.btnRefreshPorts.setToolTip("Refresh COM ports")
         self.btnRefreshPorts.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:10px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
         )
         self.btnRefreshPorts.clicked.connect(self._refresh_ports)
-        btnRow1Layout.addWidget(self.btnRefreshPorts, 1)
+        uart_layout.addWidget(self.btnRefreshPorts)
 
+        # Connect button
         self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 16px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
-        btnRow1Layout.addWidget(self.btnConnect, 2)
+        uart_layout.addWidget(self.btnConnect)
 
-        v.addWidget(btnRow1)
+        main_layout.addWidget(uart_panel)
 
-        v.addStretch()
-
-        # Right monitor panel
+        # Read Addresses Panel (left side of bottom layout)
         right = QtWidgets.QFrame()
         right.setFrameShape(QtWidgets.QFrame.StyledPanel)
         right.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         # Fix requested panel size
-        right.setFixedSize(680, 650)
+        right.setFixedSize(500, 650)
         right.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         rv = QtWidgets.QVBoxLayout(right)
         # Internal padding for right frame
@@ -757,29 +824,12 @@ class MainWindow(QtWidgets.QMainWindow):
         topLayout.addWidget(lblSlave)
         topLayout.addWidget(self.edSlave)
 
-        # Timeout
-        lblTimeout = QtWidgets.QLabel("Timeout")
-        lblTimeout.setFixedWidth(LABEL_WIDTH)
-        lblTimeout.setAlignment(QtCore.Qt.AlignCenter)
-        lblTimeout.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        self.edTimeout = QtWidgets.QLineEdit("300")
-        self.edTimeout.setValidator(QtGui.QIntValidator(1, 60000, self))
-        self.edTimeout.setFixedWidth(INPUT_WIDTH)
-        self.edTimeout.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
-        topLayout.addWidget(lblTimeout)
-        topLayout.addWidget(self.edTimeout)
-
-        # Poll interval
-        lblPoll = QtWidgets.QLabel("Poll")
-        lblPoll.setFixedWidth(LABEL_WIDTH)
-        lblPoll.setAlignment(QtCore.Qt.AlignCenter)
-        lblPoll.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        self.edPoll = QtWidgets.QLineEdit("200")
-        self.edPoll.setValidator(QtGui.QIntValidator(50, 600000, self))
-        self.edPoll.setFixedWidth(INPUT_WIDTH)
-        self.edPoll.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
-        topLayout.addWidget(lblPoll)
-        topLayout.addWidget(self.edPoll)
+        # Timeout and Poll defaults (ms) from centralized variables
+        self.edTimeout = QtWidgets.QLineEdit(str(DEFAULT_TIMEOUT_MS))
+        self.edPoll = QtWidgets.QLineEdit(str(DEFAULT_POLL_INTERVAL_MS))
+        # Keep variables in sync with UI edits
+        self.edTimeout.editingFinished.connect(self._on_timeout_changed)
+        self.edPoll.editingFinished.connect(self._on_poll_changed)
 
         topLayout.addStretch()
 
@@ -800,7 +850,11 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        grid.setColumnStretch(0, 1)
+        # Column stretch ratio: address_list : read_value : enter_value = 10 : 5 : 5
+        grid.setColumnStretch(0, 10)
+        grid.setColumnStretch(1, 5)
+        grid.setColumnStretch(2, 5)
+
 
         self.rowCombos: List[SearchableCombo] = []
         self.rowValues: List[QtWidgets.QLabel] = []
@@ -810,13 +864,14 @@ class MainWindow(QtWidgets.QMainWindow):
             r = i
             # No numeric label column; start with the address selector
             combo = SearchableCombo()
+            combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             combo.addItem("---")
             # Use same styling as COM port - no custom arrow styling
             grid.addWidget(combo, r, 0)
             self.rowCombos.append(combo)
 
             val = QtWidgets.QLabel("----")
-            val.setMinimumWidth(100)
+            val.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
             grid.addWidget(val, r, 1)
             self.rowValues.append(val)
@@ -825,7 +880,7 @@ class MainWindow(QtWidgets.QMainWindow):
             edit.setPlaceholderText("Enter value (0-65535)")
             edit.setValidator(QtGui.QIntValidator(0, 65535, self))
             edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
-            edit.setFixedWidth(120)
+            edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
             grid.addWidget(edit, r, 2)
             self.rowEdits.append(edit)
@@ -840,36 +895,116 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStatusBar(self.status)
         self._set_status("Ready")
 
-        # Layout place
-        layout.addWidget(header, 0, 0, 1, 2)
-        layout.addWidget(left,   1, 0)
-        layout.addWidget(right,  1, 1)
+        # Plot panel
+        plot_panel = QtWidgets.QFrame()
+        plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        plot_panel.setFixedSize(860, 650)
+        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        pv = QtWidgets.QVBoxLayout(plot_panel)
+        pv.setContentsMargins(2, 2, 2, 2)
+        pv.setSpacing(1)
 
-        # Keep references for size reporting
-        self.leftPanel = left
-        self.rightPanel = right
+        # Address selection: 4 SearchableCombo boxes in 2 rows (2x2 grid)
+        addrWidget = QtWidgets.QWidget()
+        addrLayout = QtWidgets.QGridLayout(addrWidget)
+        # addrLayout.setSpacing(2)
+        addrLayout.setContentsMargins(0, 0, 0, 0)
+        addrLayout.setHorizontalSpacing(4)
+        addrLayout.setVerticalSpacing(1)
+
+
+
+        self.plotCombos: List[SearchableCombo] = []
+        for i in range(4):
+            lbl = QtWidgets.QLabel(f"Ch{i+1}")
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setFixedWidth(40)
+
+            combo = SearchableCombo(half_width=False)
+            combo.addItem("---")
+            combo.setFixedWidth(140)
+            combo.setFixedHeight(35)
+
+            row = i // 2  # 0,0,1,1 -> rows 0,0,1,1
+            col = (i % 2) * 2  # 0,1,0,1 -> cols 0,2,0,2
+            addrLayout.addWidget(lbl, row, col)
+            addrLayout.addWidget(combo, row, col + 1)
+            self.plotCombos.append(combo)
+
+        pv.addWidget(addrWidget)
+
+        # Draw button
+        self.btnDraw = QtWidgets.QPushButton("Draw")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnDraw.clicked.connect(self._toggle_plotting)
+        pv.addWidget(self.btnDraw)
+
+        # Matplotlib canvas
+        self.plot_figure = Figure(figsize=(6, 4), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_canvas = FigureCanvas(self.plot_figure)
+        self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
+        self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
+        self.plot_ax.set_xlabel('Time (s)', color=Colors.TEXT_PRIMARY)
+        self.plot_ax.set_ylabel('Value', color=Colors.TEXT_PRIMARY)
+        self.plot_ax.set_title('Real-Time Data', color=Colors.TEXT_PRIMARY, fontweight='bold')
+        self.plot_ax.tick_params(colors=Colors.TEXT_PRIMARY)
+        for spine in self.plot_ax.spines.values():
+            spine.set_color(Colors.BORDER_NORMAL)
+        self.plot_ax.grid(True, alpha=0.3, color=Colors.TEXT_LABEL)
+        self.plot_figure.tight_layout(pad=1.0)
+
+        # Line objects for 4 channels
+        self.plot_lines = []
+        colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        for i, color in enumerate(colors):
+            line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=2)
+            self.plot_lines.append(line)
+        self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL, edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
+
+        pv.addWidget(self.plot_canvas)
+
+        # Add all panels to main layout
+        main_layout.addWidget(uart_panel)
+
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.setSpacing(8)
+        bottom_layout.addWidget(right)  # Read addresses panel on left
+        bottom_layout.addWidget(plot_panel)  # Plot panel on right
+
+        main_layout.addLayout(bottom_layout)
 
     # ---------- Status ----------
     def _set_status(self, msg: str):
         """Update status bar"""
         self.status.showMessage(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
-    def _report_panel_sizes(self):
-        """Report left/right panel sizes to the status bar"""
+    # ---------- Timing Handlers ----------
+    def _on_timeout_changed(self):
+        """Sync timeout variable from UI and normalize value."""
         try:
-            lw, lh = (self.leftPanel.width(), self.leftPanel.height()) if hasattr(self, 'leftPanel') else (0, 0)
-            rw, rh = (self.rightPanel.width(), self.rightPanel.height()) if hasattr(self, 'rightPanel') else (0, 0)
-            self._set_status(f"Left {lw}x{lh} | Right {rw}x{rh}")
+            val = int(self.edTimeout.text())
+            if val < 1:
+                val = 1
+            self.timeout_ms = val
+            # Normalize UI text
+            self.edTimeout.setText(str(val))
         except Exception:
-            pass
+            # Revert to last known good value
+            self.edTimeout.setText(str(self.timeout_ms))
 
-    def showEvent(self, e: QtGui.QShowEvent):
-        super().showEvent(e)
-        QtCore.QTimer.singleShot(0, self._report_panel_sizes)
-
-    def resizeEvent(self, e: QtGui.QResizeEvent):
-        super().resizeEvent(e)
-        self._report_panel_sizes()
+    def _on_poll_changed(self):
+        """Sync poll interval variable from UI and enforce minimum."""
+        try:
+            val = int(self.edPoll.text())
+            if val < 50:
+                val = 50
+            self.poll_interval_ms = val
+            # Normalize UI text
+            self.edPoll.setText(str(val))
+        except Exception:
+            self.edPoll.setText(str(self.poll_interval_ms))
 
     def _set_connected_ui(self, connected: bool):
         """Update UI for connection state"""
@@ -911,7 +1046,7 @@ class MainWindow(QtWidgets.QMainWindow):
             databits = int(self.cmbDataBits.currentText())
             parity = self.cmbParity.currentText().split('(')[-1].strip(')')
             stopbits = int(self.cmbStopBits.currentText())
-            timeout = int(self.edTimeout.text()) / 1000.0
+            timeout = self.timeout_ms / 1000.0
 
             ok, msg = self.serial_mgr.connect_port(port, baudrate, databits, parity, stopbits, timeout)
             if ok:
@@ -989,12 +1124,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     # No underscore, use line number as address
                     self.addr_items.append(f"{i:03d}_{line}")
 
-            # Update all combo boxes
+            # Update all combo boxes (monitor rows and plot channels)
             for combo in self.rowCombos:
                 combo.clear()
                 combo.addItems(self.addr_items)
                 if self.addr_items:
                     combo.setCurrentIndex(0)
+
+            # Update plot combo boxes
+            for combo in self.plotCombos:
+                combo.clear()
+                combo.addItem("---")
+                combo.addItems(self.addr_items)
+                combo.setCurrentIndex(0)
 
             fname = Path(filepath).name
             self._set_status(f"Loaded {len(lines)} addresses from {fname}")
@@ -1016,7 +1158,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
             return
         try:
-            interval_ms = int(self.edPoll.text())
+            interval_ms = self.poll_interval_ms
             if interval_ms < 50:
                 raise ValueError("Poll interval must be >= 50ms")
 
@@ -1031,8 +1173,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             def get_cfg():
                 slave = int(self.edSlave.text())
-                timeout = int(self.edTimeout.text()) / 1000.0
-                interval = int(self.edPoll.text()) / 1000.0
+                timeout = self.timeout_ms / 1000.0
+                interval = self.poll_interval_ms / 1000.0
                 return slave, timeout, interval
 
             self.worker = PollWorker(self.serial_mgr, get_row_addr, get_cfg, self)
@@ -1076,7 +1218,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             slave_id = int(self.edSlave.text())
-            timeout = int(self.edTimeout.text()) / 1000.0
+            timeout = self.timeout_ms / 1000.0
 
             txt = self.rowCombos[index].currentText()
             if not txt:
@@ -1111,12 +1253,111 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Write Error", str(e))
             self._set_status(f"Write failed: {e}")
 
+    # ---------- Plotting ----------
+    def _toggle_plotting(self):
+        """Toggle real-time plotting"""
+        if self.plot_worker and self.plot_worker.isRunning():
+            self._stop_plotting()
+        else:
+            self._start_plotting()
+
+    def _start_plotting(self):
+        """Start real-time plotting"""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+
+        try:
+            # Clear previous data
+            for ch_data in self.plot_data:
+                ch_data['time'].clear()
+                ch_data['value'].clear()
+            self.plot_start_time = time.time()
+
+            def get_addresses():
+                """Get list of 4 addresses from plot combos"""
+                addresses = []
+                for combo in self.plotCombos:
+                    txt = combo.currentText()
+                    if not txt or txt == "---":
+                        addresses.append(None)
+                    else:
+                        try:
+                            addr = int(txt.split('_', 1)[0])
+                            addresses.append(addr)
+                        except:
+                            addresses.append(None)
+                return addresses
+
+            def get_cfg():
+                slave = int(self.edSlave.text())
+                timeout = self.timeout_ms / 1000.0
+                return slave, timeout
+
+            self.plot_worker = PlotWorker(self.serial_mgr, get_addresses, get_cfg, self)
+            self.plot_worker.sigData.connect(self._on_plot_data)
+            self.plot_worker.sigStatus.connect(self._set_status)
+            self.plot_worker.start()
+
+            self.btnDraw.setText("Stop")
+            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}")
+            self._set_status("Plotting started")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", str(e))
+            self._set_status(f"Failed to start plotting: {e}")
+
+    def _stop_plotting(self):
+        """Stop real-time plotting"""
+        if self.plot_worker:
+            self.plot_worker.stop()
+            self.plot_worker.wait(1500)
+            self.plot_worker = None
+        self.btnDraw.setText("Draw")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self._set_status("Plotting stopped")
+
+    @QtCore.pyqtSlot(int, object, object)
+    def _on_plot_data(self, channel: int, value: Optional[int], timestamp: Optional[float]):
+        """Update plot with new data point"""
+        if value is not None and timestamp is not None:
+            # Store data
+            elapsed = timestamp - self.plot_start_time
+            self.plot_data[channel]['time'].append(elapsed)
+            self.plot_data[channel]['value'].append(value)
+
+            # Keep only last 100 points per channel
+            if len(self.plot_data[channel]['time']) > 100:
+                self.plot_data[channel]['time'].pop(0)
+                self.plot_data[channel]['value'].pop(0)
+
+            # Update plot
+            self._update_plot()
+
+    def _update_plot(self):
+        """Redraw the plot with current data"""
+        try:
+            for i, line in enumerate(self.plot_lines):
+                times = self.plot_data[i]['time']
+                values = self.plot_data[i]['value']
+                line.set_data(times, values)
+
+            # Auto-scale axes
+            self.plot_ax.relim()
+            self.plot_ax.autoscale_view()
+
+            self.plot_canvas.draw()
+        except Exception as e:
+            pass  # Silently ignore plot update errors
+
     # ---------- Close ----------
     def closeEvent(self, e: QtGui.QCloseEvent):
         """Handle window close event"""
         try:
             if self.worker:
                 self._stop_polling()
+            if self.plot_worker:
+                self._stop_plotting()
             if self.serial_mgr.connected:
                 self.serial_mgr.disconnect_port()
         except Exception:
