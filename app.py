@@ -394,16 +394,23 @@ class PollWorker(QtCore.QThread):
 
 # ==================== Plot Worker ====================
 class PlotWorker(QtCore.QThread):
-    """Background thread for plotting data acquisition at 80ms intervals"""
+    """Background thread for plotting with phase-locked 40ms requests.
+
+    Reads 4 channels (addresses 0x0001..0x0004) at a fixed request interval,
+    keeping each slot aligned to a 40ms grid (or configurable via req_interval_ms).
+    One full cycle across the four channels takes exactly 4 * req_interval_ms.
+    """
 
     sigData = QtCore.pyqtSignal(int, object, object)  # channel_index, value|None, timestamp|None
     sigStatus = QtCore.pyqtSignal(str)
 
-    def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_cfg_callable, parent=None):
+    def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
         super().__init__(parent)
         self.serial_mgr = serial_mgr
-        self.get_addresses = get_addresses_callable  # returns list of 4 addresses (int or None)
+        # Kept for compatibility; not used since addresses are fixed 0x0001..0x0004
+        self.get_addresses = get_addresses_callable
         self.get_cfg = get_cfg_callable              # returns (slave_id:int, timeout:float)
+        self.req_interval_ms = max(1, int(req_interval_ms))
         self._running = True
 
     def stop(self):
@@ -411,39 +418,52 @@ class PlotWorker(QtCore.QThread):
         self._running = False
 
     def run(self):
-        """Main data acquisition loop - 80ms interval"""
+        """Phase-locked acquisition: CH1..CH4 on a 40ms grid (160ms per cycle)."""
+        # Use a high-resolution monotonic clock for scheduling
+        interval_s = self.req_interval_ms / 1000.0
+        base = time.perf_counter()
+        slot_idx = 0  # increases every request; channel = slot_idx % 4
+
+        # Fixed Modbus addresses for CH1..CH4
+        fixed_addresses = [0x0001, 0x0002, 0x0003, 0x0004]
+
         while self._running:
             try:
+                # Always fetch latest config (slave, timeout)
                 slave_id, timeout = self.get_cfg()
-                addresses = self.get_addresses()  # List of 4 addresses
             except Exception as e:
                 self.sigStatus.emit(f"Invalid configuration: {e}")
                 time.sleep(1.0)
                 continue
 
+            # Compute scheduled start for this slot and align to grid
+            scheduled = base + slot_idx * interval_s
+            now = time.perf_counter()
+            remaining = scheduled - now
+            if remaining > 0:
+                time.sleep(remaining)
+
+            # Determine channel and address
+            ch = slot_idx % 4
+            addr = fixed_addresses[ch]
+
+            # Timestamp for UI
             timestamp = time.time()
 
-            # Read all 4 channels
-            for i, addr in enumerate(addresses):
-                if not self._running:
-                    break
+            # Perform Modbus read for this channel
+            try:
+                req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
+                ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
+                if ok and isinstance(result, list) and result:
+                    self.sigData.emit(ch, int(result[0]), timestamp)
+                else:
+                    # On error, emit None
+                    self.sigData.emit(ch, None, timestamp)
+            except Exception:
+                self.sigData.emit(ch, None, timestamp)
 
-                if addr is None:
-                    continue
-
-                try:
-                    req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
-                    ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
-                    if ok and isinstance(result, list) and result:
-                        self.sigData.emit(i, int(result[0]), timestamp)
-                    else:
-                        err = result if isinstance(result, str) else "Read failed"
-                        self.sigData.emit(i, None, timestamp)
-                except Exception as e:
-                    self.sigData.emit(i, None, timestamp)
-
-            # 80ms interval
-            time.sleep(0.08)
+            # Advance to next 40ms slot without drifting the phase
+            slot_idx += 1
 
 
 # ==================== UI Helpers ====================
@@ -483,6 +503,14 @@ class SearchableCombo(QtWidgets.QComboBox):
         # Connections
         self.view().clicked.connect(self._on_view_activate)
         self.view().pressed.connect(self._on_view_activate)
+        # Ensure the editable display text is left-aligned
+        try:
+            self.lineEdit().setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        except Exception:
+            pass
+
+        # Ensure initial view shows beginning of text
+        QtCore.QTimer.singleShot(0, self._reset_cursor_to_start)
 
         # Set width to half if requested
         if half_width:
@@ -526,6 +554,8 @@ class SearchableCombo(QtWidgets.QComboBox):
         """Hide popup and reset state"""
         self._popup_open = False
         super().hidePopup()
+        # After popup closes, show beginning of the text
+        QtCore.QTimer.singleShot(0, self._reset_cursor_to_start)
 
     def _highlight_first_match(self):
         """Highlight first item that contains the typed text"""
@@ -557,6 +587,8 @@ class SearchableCombo(QtWidgets.QComboBox):
             super().setCurrentIndex(row)
         finally:
             self._allow_commit = False
+        # After committing a row, show beginning of the text
+        QtCore.QTimer.singleShot(0, self._reset_cursor_to_start)
 
     def _on_view_activate(self, mi: QtCore.QModelIndex):
         """Handle click/press on popup item"""
@@ -637,10 +669,27 @@ class SearchableCombo(QtWidgets.QComboBox):
         else:
             event.ignore()
 
+    # ----- Cursor management -----
+    def _reset_cursor_to_start(self):
+        """Move cursor to start so the beginning of text is visible."""
+        try:
+            le = self.lineEdit()
+            if le is not None:
+                le.setCursorPosition(0)
+        except Exception:
+            pass
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent):
+        """When losing focus, ensure the beginning is visible."""
+        super().focusOutEvent(event)
+        QtCore.QTimer.singleShot(0, self._reset_cursor_to_start)
+
     # ----- API compatibility methods -----
     def addItem(self, text, userData=None):
         """Add item to model (API-compatible with QComboBox)"""
         item = QtGui.QStandardItem(str(text))
+        # Make sure popup list text is left-aligned
+        item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         if userData is not None:
             item.setData(userData, QtCore.Qt.UserRole)
         self._model.appendRow(item)
@@ -913,7 +962,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.setContentsMargins(2, 2, 2, 2)
         pv.setSpacing(1)
 
-        # Address selection: 4 SearchableCombo boxes in 2 rows (2x2 grid)
+        # Address selection: 4 SearchableCombo boxes in a single row
         addrWidget = QtWidgets.QWidget()
         addrLayout = QtWidgets.QGridLayout(addrWidget)
         # addrLayout.setSpacing(2)
@@ -932,11 +981,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             combo = SearchableCombo(half_width=False)
             combo.addItem("---")
-            combo.setFixedWidth(240)
+            combo.setStyleSheet("font-size:12px; font-weight:500;")
+            # Fit four label+combo pairs within the fixed panel width
+            combo.setFixedWidth(160)
             combo.setFixedHeight(35)
 
-            row = i // 2  # 0,0,1,1 -> rows 0,0,1,1
-            col = (i % 2) * 2  # 0,1,0,1 -> cols 0,2,0,2
+            # Place all channels on the same row
+            row = 0
+            col = i * 2  # label at even col, combo at odd col
             addrLayout.addWidget(lbl, row, col)
             addrLayout.addWidget(combo, row, col + 1)
             self.plotCombos.append(combo)
@@ -946,17 +998,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # Draw button
         self.btnDraw = QtWidgets.QPushButton("Draw")
         self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        # Keep the button compact instead of stretching across the panel
+        self.btnDraw.setFixedHeight(40)
+        self.btnDraw.setFixedWidth(250)
         self.btnDraw.clicked.connect(self._toggle_plotting)
-        pv.addWidget(self.btnDraw)
+        pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(6, 5), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(8, 5.5), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
-        self.plot_ax.set_xlabel('Time (s)', color=Colors.TEXT_PRIMARY)
-        self.plot_ax.set_ylabel('Value', color=Colors.TEXT_PRIMARY)
-        self.plot_ax.set_title('Real-Time Data', color=Colors.TEXT_PRIMARY, fontweight='bold')
+        # self.plot_ax.set_xlabel('Time (s)', color=Colors.TEXT_PRIMARY)
+        # self.plot_ax.set_ylabel('Value', color=Colors.TEXT_PRIMARY)
         self.plot_ax.tick_params(colors=Colors.TEXT_PRIMARY)
         for spine in self.plot_ax.spines.values():
             spine.set_color(Colors.BORDER_NORMAL)

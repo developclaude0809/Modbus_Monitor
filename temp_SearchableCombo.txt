@@ -1,0 +1,225 @@
+class SearchableCombo(QtWidgets.QComboBox):
+    """
+    No-filter searchable combo:
+    - Typing does NOT change the current value and does NOT filter items.
+    - Opening the popup (or pressing Down) auto-highlights the first item that CONTAINS the typed text (case-insensitive).
+    - Arrow keys move the highlight only; click or Enter commits.
+    - Supports mouse wheel scrolling when hovered/focused.
+    - API-compatible with QComboBox (addItem, addItems, clear, etc.)
+    """
+
+    def __init__(self, parent=None, half_width=True):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setCompleter(None)  # disable built-in completer
+
+        # Model: no proxy, no filtering
+        self._model = QtGui.QStandardItemModel(self)
+        super().setModel(self._model)
+        self.setModelColumn(0)
+
+        # State
+        self._allow_commit = False
+        self._popup_open = False
+        self._hovered = False
+
+        # Event filters
+        self.installEventFilter(self)            # block built-in type-to-select
+        self.lineEdit().installEventFilter(self) # Down/F4/Enter handling
+        self.view().installEventFilter(self)     # arrow navigation without committing
+        self.setMouseTracking(True)
+
+        # Connections
+        self.view().clicked.connect(self._on_view_activate)
+        self.view().pressed.connect(self._on_view_activate)
+        # Ensure the editable display text is left-aligned
+        try:
+            self.lineEdit().setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        except Exception:
+            pass
+
+        # Set width to half if requested
+        if half_width:
+            self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+            self.setMaximumWidth(150)
+
+        # Apply stylesheet if Colors class is available
+        try:
+            self.setStyleSheet(
+                f"""
+                QComboBox {{
+                    background-color: {Colors.BG_INPUT};
+                    color: {Colors.TEXT_PRIMARY};
+                    border: 2px solid {Colors.BORDER_NORMAL};
+                    border-radius: 6px;
+                    padding: 6px 8px;
+                }}
+                QComboBox:focus {{
+                    border: 2px solid {Colors.BORDER_FOCUS};
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {Colors.BG_INPUT};
+                    color: {Colors.TEXT_PRIMARY};
+                    border: 2px solid {Colors.BORDER_NORMAL};
+                    selection-background-color: {Colors.SOFT_YELLOW};
+                    selection-color: {Colors.MIDNIGHT_NAVY};
+                }}
+                """
+            )
+        except (NameError, AttributeError):
+            pass  # Colors not available, skip styling
+
+    # ----- Core behavior -----
+    def showPopup(self):
+        """Show popup and auto-highlight first match"""
+        super().showPopup()
+        self._popup_open = True
+        QtCore.QTimer.singleShot(0, self._highlight_first_match)
+
+    def hidePopup(self):
+        """Hide popup and reset state"""
+        self._popup_open = False
+        super().hidePopup()
+
+    def _highlight_first_match(self):
+        """Highlight first item that contains the typed text"""
+        text = self.lineEdit().text().casefold()
+        target_row = None
+
+        if text:
+            # Find first item containing the typed text
+            for row in range(self._model.rowCount()):
+                val = self._model.item(row).text()
+                if text in val.casefold():
+                    target_row = row
+                    break
+
+        # If no match or no text, keep current index
+        if target_row is None:
+            target_row = max(0, self.currentIndex())
+
+        # Highlight the target row
+        idx = self.model().index(target_row, 0)
+        self.view().setCurrentIndex(idx)
+        self.view().selectionModel().setCurrentIndex(idx, QtCore.QItemSelectionModel.ClearAndSelect)
+        self.view().scrollTo(idx, QtWidgets.QAbstractItemView.PositionAtCenter)
+
+    def _commit_row(self, row: int):
+        """Commit selection to specified row"""
+        self._allow_commit = True
+        try:
+            super().setCurrentIndex(row)
+        finally:
+            self._allow_commit = False
+
+    def _on_view_activate(self, mi: QtCore.QModelIndex):
+        """Handle click/press on popup item"""
+        if not mi.isValid():
+            return
+        self._commit_row(mi.row())
+        self.hidePopup()
+
+    def setCurrentIndex(self, index: int):
+        """Override to block non-explicit commits (e.g., highlight moves)"""
+        if self._allow_commit or index == -1:
+            return super().setCurrentIndex(index)
+        # Otherwise ignore (prevents typing from changing value)
+
+    # ----- Event filtering -----
+    def eventFilter(self, obj, ev):
+        """Handle keyboard events for search and navigation"""
+        # Block built-in type-to-select so typing doesn't jump value
+        if obj is self and ev.type() == QtCore.QEvent.ShortcutOverride:
+            if ev.text() and not (ev.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier)):
+                ev.accept()
+                return True
+
+        # Line edit: open/close popup; Enter to commit highlighted when open
+        if obj is self.lineEdit() and ev.type() == QtCore.QEvent.KeyPress:
+            key = ev.key()
+            if key in (QtCore.Qt.Key_Down, QtCore.Qt.Key_F4):
+                if self._popup_open:
+                    self.hidePopup()
+                else:
+                    self.showPopup()
+                return True
+            if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                if self._popup_open:
+                    mi = self.view().currentIndex()
+                    if mi.isValid():
+                        self._on_view_activate(mi)
+                return True
+
+        # Popup list: arrow keys move highlight only; no commit
+        if obj is self.view() and ev.type() == QtCore.QEvent.KeyPress:
+            if ev.key() in (
+                QtCore.Qt.Key_Up, QtCore.Qt.Key_Down,
+                QtCore.Qt.Key_PageUp, QtCore.Qt.Key_PageDown,
+                QtCore.Qt.Key_Home, QtCore.Qt.Key_End
+            ):
+                QtWidgets.QAbstractItemView.keyPressEvent(self.view(), ev)
+                return True
+
+        return super().eventFilter(obj, ev)
+
+    # ----- Mouse wheel support -----
+    def enterEvent(self, event: QtCore.QEvent):
+        """Track hover state for wheel scrolling"""
+        self._hovered = True
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent):
+        """Track hover state for wheel scrolling"""
+        self._hovered = False
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        """Scroll items when hovered or focused; do not open popup"""
+        if self._hovered or self.hasFocus():
+            cnt = self.count()
+            if cnt > 0:
+                delta = event.angleDelta().y()
+                current = self.currentIndex()
+                if delta > 0:
+                    new_idx = (current - 1) % cnt
+                elif delta < 0:
+                    new_idx = (current + 1) % cnt
+                else:
+                    return
+                # Use commit to actually change the value
+                self._commit_row(new_idx)
+        else:
+            event.ignore()
+
+    # ----- API compatibility methods -----
+    def addItem(self, text, userData=None):
+        """Add item to model (API-compatible with QComboBox)"""
+        item = QtGui.QStandardItem(str(text))
+        # Make sure popup list text is left-aligned
+        item.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        if userData is not None:
+            item.setData(userData, QtCore.Qt.UserRole)
+        self._model.appendRow(item)
+
+    def addItems(self, texts):
+        """Add multiple items to model (API-compatible with QComboBox)"""
+        for text in texts:
+            self.addItem(text)
+
+    def clear(self):
+        """Clear all items (API-compatible with QComboBox)"""
+        self._model.clear()
+
+    def count(self):
+        """Return number of items"""
+        return self._model.rowCount()
+
+    def setModel(self, model):
+        """Override setModel for external compatibility"""
+        if model != self._model:
+            self._model = model
+            super().setModel(self._model)
+
+
