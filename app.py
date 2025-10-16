@@ -35,6 +35,7 @@ try:
     import matplotlib
     matplotlib.use('Qt5Agg')
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
     from matplotlib.figure import Figure
     import matplotlib.pyplot as plt
 except ImportError:
@@ -737,7 +738,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Modbus RTU Controller (PyQt5)")
+        self.setWindowTitle("Modbus RTU Controller")
         self.resize(1400, 750)
 
         self.serial_mgr = SerialManager(self)
@@ -754,6 +755,11 @@ class MainWindow(QtWidgets.QMainWindow):
             {'time': [], 'value': []} for _ in range(4)
         ]
         self.plot_start_time = 0.0
+
+        # Manual zoom state
+        self.manual_zoom_active = False
+        self.zoom_history = []  # Stack of (xlim, ylim) tuples for zoom out
+        self.rect_selector = None  # Rectangle selector for drag-to-zoom
 
         self._build_ui()
         self._auto_load_definitions()
@@ -826,6 +832,12 @@ class MainWindow(QtWidgets.QMainWindow):
         uart_layout.addWidget(self.cmbStopBits)
 
         uart_layout.addStretch()
+
+        # Load button
+        self.btnLoad = QtWidgets.QPushButton("Load")
+        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
+        self.btnLoad.clicked.connect(self._load_definitions_dialog)
+        uart_layout.addWidget(self.btnLoad)
 
         # Refresh button
         self.btnRefreshPorts = QtWidgets.QPushButton("Refresh")
@@ -948,17 +960,6 @@ class MainWindow(QtWidgets.QMainWindow):
         scroll.setWidget(inner)
         rv.addWidget(scroll)
 
-        # Bottom-left Load button (below 10th row)
-        bottomBar = QtWidgets.QHBoxLayout()
-        bottomBar.setContentsMargins(0, 0, 0, 0)
-        bottomBar.setSpacing(0)
-        self.btnLoad = QtWidgets.QPushButton("Load")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:6px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}")
-        self.btnLoad.clicked.connect(self._load_definitions_dialog)
-        bottomBar.addWidget(self.btnLoad)
-        bottomBar.addStretch(1)
-        rv.addLayout(bottomBar)
-
         # Status bar
         self.status = QtWidgets.QStatusBar()
         self.setStatusBar(self.status)
@@ -1017,7 +1018,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(8, 5.5), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(8, 5), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
@@ -1037,7 +1038,38 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_lines.append(line)
         self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL, edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
 
+        # Add navigation toolbar below the plot
+        self.plot_toolbar = NavigationToolbar2QT(self.plot_canvas, plot_panel)
+        self.plot_toolbar.setStyleSheet(f"""
+            QToolBar {{
+                background: {Colors.BG_PANEL};
+                border: 1px solid {Colors.BORDER_NORMAL};
+                border-radius: 4px;
+                spacing: 3px;
+                padding: 2px;
+            }}
+            QToolButton {{
+                background: {Colors.BG_INPUT};
+                color: {Colors.TEXT_PRIMARY};
+                border: 1px solid {Colors.BORDER_NORMAL};
+                border-radius: 3px;
+                padding: 3px;
+                margin: 1px;
+            }}
+            QToolButton:hover {{
+                background: {Colors.BTN_PRIMARY_HOVER};
+                border-color: {Colors.BORDER_FOCUS};
+            }}
+            QToolButton:pressed {{
+                background: {Colors.DEEP_BLUE};
+            }}
+        """)
+
         pv.addWidget(self.plot_canvas)
+        pv.addWidget(self.plot_toolbar)
+
+        # Connect interactive zoom events after canvas creation
+        self._connect_plot_events()
 
         # Add all panels to main layout
         main_layout.addWidget(uart_panel)
@@ -1048,6 +1080,172 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_layout.addWidget(plot_panel)  # Plot panel on right
 
         main_layout.addLayout(bottom_layout)
+
+    # ---------- Plot Event Connections ----------
+    def _connect_plot_events(self):
+        """Connect interactive zoom events to the plot canvas"""
+        # Mouse wheel zoom
+        self.plot_canvas.mpl_connect('scroll_event', self._on_scroll_zoom)
+
+        # Double-click to reset
+        self.plot_canvas.mpl_connect('button_press_event', self._on_mouse_press)
+
+        # Drag rectangle zoom
+        self.plot_canvas.mpl_connect('button_press_event', self._on_drag_start)
+        self.plot_canvas.mpl_connect('button_release_event', self._on_drag_end)
+        self.plot_canvas.mpl_connect('motion_notify_event', self._on_drag_motion)
+
+        # Rectangle selection state
+        self.drag_start = None
+        self.drag_rect = None
+
+    def _on_scroll_zoom(self, event):
+        """Handle mouse wheel zoom centered on cursor position"""
+        if event.inaxes != self.plot_ax:
+            return
+
+        # Get current axis limits
+        cur_xlim = self.plot_ax.get_xlim()
+        cur_ylim = self.plot_ax.get_ylim()
+
+        # Save current state to zoom history before zooming
+        if not self.manual_zoom_active:
+            self.zoom_history = [(cur_xlim, cur_ylim)]
+
+        # Get cursor position
+        xdata = event.xdata
+        ydata = event.ydata
+
+        # Zoom factor (scroll up = zoom in, scroll down = zoom out)
+        if event.button == 'up':
+            scale_factor = 0.8
+        elif event.button == 'down':
+            scale_factor = 1.25
+        else:
+            return
+
+        # Calculate new limits centered on cursor
+        new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+        new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+
+        relx = (cur_xlim[1] - xdata) / (cur_xlim[1] - cur_xlim[0])
+        rely = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0])
+
+        new_xlim = [xdata - new_width * (1 - relx), xdata + new_width * relx]
+        new_ylim = [ydata - new_height * (1 - rely), ydata + new_height * rely]
+
+        # Apply new limits
+        self.plot_ax.set_xlim(new_xlim)
+        self.plot_ax.set_ylim(new_ylim)
+        self.manual_zoom_active = True
+        self.plot_canvas.draw_idle()
+
+    def _on_mouse_press(self, event):
+        """Handle mouse button press for double-click reset and right-click zoom out"""
+        if event.inaxes != self.plot_ax:
+            return
+
+        # Double-click: reset to auto-scale
+        if event.dblclick:
+            self.manual_zoom_active = False
+            self.zoom_history.clear()
+            self.plot_ax.relim()
+            self.plot_ax.autoscale_view()
+            self.plot_canvas.draw_idle()
+            self._set_status("Zoom reset to auto-scale")
+            return
+
+        # Right-click: zoom out one level
+        if event.button == 3:  # Right mouse button
+            if self.zoom_history:
+                xlim, ylim = self.zoom_history.pop()
+                self.plot_ax.set_xlim(xlim)
+                self.plot_ax.set_ylim(ylim)
+                if not self.zoom_history:
+                    self.manual_zoom_active = False
+                self.plot_canvas.draw_idle()
+                self._set_status("Zoomed out one level")
+            else:
+                # Already at base level, reset to auto
+                self.manual_zoom_active = False
+                self.plot_ax.relim()
+                self.plot_ax.autoscale_view()
+                self.plot_canvas.draw_idle()
+                self._set_status("Zoom reset to auto-scale")
+
+    def _on_drag_start(self, event):
+        """Start drag rectangle zoom"""
+        if event.inaxes != self.plot_ax:
+            return
+
+        # Only left mouse button for drag zoom
+        if event.button == 1 and not event.dblclick:
+            self.drag_start = (event.xdata, event.ydata)
+
+    def _on_drag_motion(self, event):
+        """Draw selection rectangle during drag"""
+        if self.drag_start is None or event.inaxes != self.plot_ax:
+            return
+
+        # Remove previous rectangle if exists
+        if self.drag_rect is not None:
+            self.drag_rect.remove()
+            self.drag_rect = None
+
+        # Draw new rectangle
+        x0, y0 = self.drag_start
+        x1, y1 = event.xdata, event.ydata
+        width = x1 - x0
+        height = y1 - y0
+
+        self.drag_rect = self.plot_ax.add_patch(
+            plt.Rectangle((x0, y0), width, height,
+                         fill=False, edgecolor=Colors.SOFT_YELLOW,
+                         linewidth=2, linestyle='--', alpha=0.8)
+        )
+        self.plot_canvas.draw_idle()
+
+    def _on_drag_end(self, event):
+        """Complete drag rectangle zoom"""
+        if self.drag_start is None or event.inaxes != self.plot_ax:
+            self.drag_start = None
+            return
+
+        # Only process left mouse button
+        if event.button != 1:
+            self.drag_start = None
+            return
+
+        x0, y0 = self.drag_start
+        x1, y1 = event.xdata, event.ydata
+
+        # Remove rectangle
+        if self.drag_rect is not None:
+            self.drag_rect.remove()
+            self.drag_rect = None
+
+        self.drag_start = None
+
+        # Only zoom if drag was significant (> 5 pixels)
+        if abs(x1 - x0) < 0.01 or abs(y1 - y0) < 0.01:
+            self.plot_canvas.draw_idle()
+            return
+
+        # Save current state to history
+        if not self.manual_zoom_active:
+            cur_xlim = self.plot_ax.get_xlim()
+            cur_ylim = self.plot_ax.get_ylim()
+            self.zoom_history = [(cur_xlim, cur_ylim)]
+        else:
+            # Push current view to history stack
+            self.zoom_history.append((self.plot_ax.get_xlim(), self.plot_ax.get_ylim()))
+
+        # Apply zoom to selected rectangle
+        self.plot_ax.set_xlim(sorted([x0, x1]))
+        self.plot_ax.set_ylim(sorted([y0, y1]))
+        self.manual_zoom_active = True
+        self.plot_canvas.draw_idle()
+        self._set_status("Zoomed to selection")
 
     # ---------- Status ----------
     def _set_status(self, msg: str):
@@ -1348,11 +1546,13 @@ class MainWindow(QtWidgets.QMainWindow):
             # Ensure polling is stopped before starting plotting
             if self.worker and self.worker.isRunning():
                 self._stop_polling()
-            # Clear previous data
+            # Clear previous data and reset zoom state
             for ch_data in self.plot_data:
                 ch_data['time'].clear()
                 ch_data['value'].clear()
             self.plot_start_time = time.time()
+            self.manual_zoom_active = False
+            self.zoom_history.clear()
 
             def get_addresses():
                 """Get list of 4 addresses from plot combos"""
@@ -1407,7 +1607,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_data[channel]['value'].append(value)
 
             # Keep only last 100 points per channel
-            if len(self.plot_data[channel]['time']) > 100:
+            if len(self.plot_data[channel]['time']) > 375:
                 self.plot_data[channel]['time'].pop(0)
                 self.plot_data[channel]['value'].pop(0)
 
@@ -1422,9 +1622,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 values = self.plot_data[i]['value']
                 line.set_data(times, values)
 
-            # Auto-scale axes
-            self.plot_ax.relim()
-            self.plot_ax.autoscale_view()
+            # Only auto-scale if manual zoom is not active
+            if not self.manual_zoom_active:
+                self.plot_ax.relim()
+                self.plot_ax.autoscale_view()
 
             self.plot_canvas.draw()
         except Exception as e:
