@@ -396,9 +396,11 @@ class PollWorker(QtCore.QThread):
 class PlotWorker(QtCore.QThread):
     """Background thread for plotting with phase-locked 40ms requests.
 
-    Reads 4 channels (addresses 0x0001..0x0004) at a fixed request interval,
-    keeping each slot aligned to a 40ms grid (or configurable via req_interval_ms).
-    One full cycle across the four channels takes exactly 4 * req_interval_ms.
+    Reads 4 channels whose addresses are selected via the CH1–CH4
+    comboboxes in the UI. Requests occur on a fixed interval grid
+    (default 40 ms per slot), cycling through the four channels.
+    One full cycle across the four channels takes exactly
+    4 * req_interval_ms.
     """
 
     sigData = QtCore.pyqtSignal(int, object, object)  # channel_index, value|None, timestamp|None
@@ -407,7 +409,7 @@ class PlotWorker(QtCore.QThread):
     def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
         super().__init__(parent)
         self.serial_mgr = serial_mgr
-        # Kept for compatibility; not used since addresses are fixed 0x0001..0x0004
+        # Callable returning a list of 4 addresses (or None) for CH1–CH4
         self.get_addresses = get_addresses_callable
         self.get_cfg = get_cfg_callable              # returns (slave_id:int, timeout:float)
         self.req_interval_ms = max(1, int(req_interval_ms))
@@ -424,8 +426,7 @@ class PlotWorker(QtCore.QThread):
         base = time.perf_counter()
         slot_idx = 0  # increases every request; channel = slot_idx % 4
 
-        # Fixed Modbus addresses for CH1..CH4
-        fixed_addresses = [0x0001, 0x0002, 0x0003, 0x0004]
+        # Addresses are provided dynamically by the UI via self.get_addresses()
 
         while self._running:
             try:
@@ -445,20 +446,31 @@ class PlotWorker(QtCore.QThread):
 
             # Determine channel and address
             ch = slot_idx % 4
-            addr = fixed_addresses[ch]
+            try:
+                addresses = self.get_addresses() or []
+            except Exception:
+                addresses = []
+
+            addr = None
+            if isinstance(addresses, (list, tuple)) and len(addresses) >= 4:
+                addr = addresses[ch]
 
             # Timestamp for UI
             timestamp = time.time()
 
             # Perform Modbus read for this channel
             try:
-                req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
-                ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
-                if ok and isinstance(result, list) and result:
-                    self.sigData.emit(ch, int(result[0]), timestamp)
-                else:
-                    # On error, emit None
+                if addr is None:
+                    # No address selected for this channel
                     self.sigData.emit(ch, None, timestamp)
+                else:
+                    req = ModbusRTU.read_holding_registers(slave_id, int(addr), 1)
+                    ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
+                    if ok and isinstance(result, list) and result:
+                        self.sigData.emit(ch, int(result[0]), timestamp)
+                    else:
+                        # On error, emit None
+                        self.sigData.emit(ch, None, timestamp)
             except Exception:
                 self.sigData.emit(ch, None, timestamp)
 
