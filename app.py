@@ -1601,6 +1601,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_plot_data(self, channel: int, value: Optional[int], timestamp: Optional[float]):
         """Update plot with new data point"""
         if value is not None and timestamp is not None:
+            # Convert Modbus Uint16 (0-65535) to signed Int16 (-32768 to +32767)
+            if value > 32767:
+                value -= 65536
+
             # Store data
             elapsed = timestamp - self.plot_start_time
             self.plot_data[channel]['time'].append(elapsed)
