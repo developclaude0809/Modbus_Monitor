@@ -226,6 +226,7 @@ class SerialManager(QtCore.QObject):
         self.max_retries = 3
         self.inter_frame_delay = 0.01
         self._lock = QtCore.QMutex()
+        self.io_lock = QtCore.QMutex()
 
     def connect_port(self, port_name: str, baudrate: int, bytesize: int,
                      parity: str, stopbits: int, timeout: float) -> Tuple[bool, str]:
@@ -283,7 +284,7 @@ class SerialManager(QtCore.QObject):
         return 0
 
     def transact(self, request: bytes, expected_slave: int, expected_func: int,
-                 timeout: float = 0.5) -> Tuple[bool, Any]:
+                 timeout: float = 0.5, post_quiet_ms: int = 0) -> Tuple[bool, Any]:
         """Perform Modbus transaction with automatic retries"""
         with QtCore.QMutexLocker(self._lock):
             if not self.connected or not self.port:
@@ -294,51 +295,56 @@ class SerialManager(QtCore.QObject):
         if port is None:
             return False, "Not connected"
 
-        for attempt in range(self.max_retries):
-            try:
-                time.sleep(self.inter_frame_delay)
+        locker = QtCore.QMutexLocker(self.io_lock)
+        try:
+            for attempt in range(self.max_retries):
+                try:
+                    time.sleep(self.inter_frame_delay)
 
-                port.reset_input_buffer()
-                port.reset_output_buffer()
-                port.write(request)
-                port.flush()
+                    port.reset_input_buffer()
+                    port.reset_output_buffer()
+                    port.write(request)
+                    port.flush()
 
-                start = time.time()
-                buf = bytearray()
-                expected_len = 0
+                    start = time.time()
+                    buf = bytearray()
+                    expected_len = 0
 
-                while (time.time() - start) < timeout:
-                    chunk = port.read(256)
-                    if chunk:
-                        buf.extend(chunk)
-                        if len(buf) >= 2:
-                            expected_len = self._expected_response_length(expected_func, buf)
-                        if expected_len and len(buf) >= expected_len:
-                            break
-                    else:
-                        time.sleep(0.003)
+                    while (time.time() - start) < timeout:
+                        chunk = port.read(256)
+                        if chunk:
+                            buf.extend(chunk)
+                            if len(buf) >= 2:
+                                expected_len = self._expected_response_length(expected_func, buf)
+                            if expected_len and len(buf) >= expected_len:
+                                break
+                        else:
+                            time.sleep(0.003)
 
-                if not buf:
+                    if not buf:
+                        if attempt < self.max_retries - 1:
+                            time.sleep(0.05)
+                            continue
+                        return False, "Timeout - No response"
+
+                    if expected_len and len(buf) < expected_len:
+                        if attempt < self.max_retries - 1:
+                            time.sleep(0.05)
+                            continue
+                        return False, f"Incomplete response ({len(buf)}/{expected_len} bytes)"
+
+                    return ModbusRTU.parse_response(bytes(buf), expected_slave, expected_func)
+
+                except Exception as e:
                     if attempt < self.max_retries - 1:
                         time.sleep(0.05)
                         continue
-                    return False, "Timeout - No response"
+                    return False, str(e)
 
-                if expected_len and len(buf) < expected_len:
-                    if attempt < self.max_retries - 1:
-                        time.sleep(0.05)
-                        continue
-                    return False, f"Incomplete response ({len(buf)}/{expected_len} bytes)"
-
-                return ModbusRTU.parse_response(bytes(buf), expected_slave, expected_func)
-
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    time.sleep(0.05)
-                    continue
-                return False, str(e)
-
-        return False, "Max retries exceeded"
+            return False, "Max retries exceeded"
+        finally:
+            if post_quiet_ms and post_quiet_ms > 0:
+                time.sleep(post_quiet_ms / 1000.0)
 
 
 # ==================== Polling Worker ====================
@@ -882,7 +888,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Connect button
         self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 16px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
         uart_layout.addWidget(self.btnConnect)
 
@@ -1463,10 +1469,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update UI for connection state"""
         if connected:
             self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}")
         else:
             self.btnConnect.setText("Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -1689,7 +1695,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 raise ValueError("Value must be between 0 and 65535")
 
             req = ModbusRTU.write_single_register(slave_id, addr, value)
-            ok, result = self.serial_mgr.transact(req, slave_id, 0x06, timeout=timeout)
+            ok, result = self.serial_mgr.transact(req, slave_id, 0x06, timeout=timeout, post_quiet_ms=100)
             if not ok:
                 raise RuntimeError(result)
 
