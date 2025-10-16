@@ -399,19 +399,19 @@ class PlotWorker(QtCore.QThread):
 
     Reads 4 channels whose addresses are selected via the CH1–CH4
     comboboxes in the UI. Requests occur on a fixed interval grid
-    (default 40 ms per slot), cycling through the four channels.
-    One full cycle across the four channels takes exactly
-    4 * req_interval_ms.
+    (default 40 ms per slot), cycling through enabled channels only.
     """
 
     sigData = QtCore.pyqtSignal(int, object, object)  # channel_index, value|None, timestamp|None
     sigStatus = QtCore.pyqtSignal(str)
 
-    def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
+    def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_active_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
         super().__init__(parent)
         self.serial_mgr = serial_mgr
         # Callable returning a list of 4 addresses (or None) for CH1–CH4
         self.get_addresses = get_addresses_callable
+        # Callable returning list of enabled channel indices (e.g., [0, 1, 2, 3] or [0, 1, 3])
+        self.get_active = get_active_callable
         self.get_cfg = get_cfg_callable              # returns (slave_id:int, timeout:float)
         self.req_interval_ms = max(1, int(req_interval_ms))
         self._running = True
@@ -421,13 +421,11 @@ class PlotWorker(QtCore.QThread):
         self._running = False
 
     def run(self):
-        """Phase-locked acquisition: CH1..CH4 on a 40ms grid (160ms per cycle)."""
+        """Phase-locked acquisition: enabled channels only on a 40ms grid."""
         # Use a high-resolution monotonic clock for scheduling
         interval_s = self.req_interval_ms / 1000.0
         base = time.perf_counter()
-        slot_idx = 0  # increases every request; channel = slot_idx % 4
-
-        # Addresses are provided dynamically by the UI via self.get_addresses()
+        slot_idx = 0  # increases every 40ms slot
 
         while self._running:
             try:
@@ -445,15 +443,28 @@ class PlotWorker(QtCore.QThread):
             if remaining > 0:
                 time.sleep(remaining)
 
-            # Determine channel and address
-            ch = slot_idx % 4
+            # Get list of enabled channel indices
+            try:
+                active_idxs = self.get_active()
+            except Exception:
+                active_idxs = []
+
+            # If no channels are enabled, just idle (no IO)
+            if not active_idxs:
+                slot_idx += 1
+                continue
+
+            # Determine which channel to read this slot
+            ch = active_idxs[slot_idx % len(active_idxs)]
+
+            # Get addresses for all channels
             try:
                 addresses = self.get_addresses() or []
             except Exception:
                 addresses = []
 
             addr = None
-            if isinstance(addresses, (list, tuple)) and len(addresses) >= 4:
+            if isinstance(addresses, (list, tuple)) and len(addresses) > ch:
                 addr = addresses[ch]
 
             # Timestamp for UI
@@ -732,6 +743,21 @@ class AddressCombo(QtWidgets.QComboBox):
     pass
 
 
+class ClickableLabel(QtWidgets.QLabel):
+    """QLabel that emits a clicked signal when pressed"""
+    clicked = QtCore.pyqtSignal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        """Emit clicked signal on mouse press"""
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 # ==================== Main Window ====================
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window"""
@@ -760,6 +786,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.manual_zoom_active = False
         self.zoom_history = []  # Stack of (xlim, ylim) tuples for zoom out
         self.rect_selector = None  # Rectangle selector for drag-to-zoom
+
+        # Channel enable/disable state
+        self.plot_active = [True, True, True, True]  # CH1-CH4 enabled by default
+        self.plotLabels: List[ClickableLabel] = []  # References to CH1-CH4 labels
+        self.ch_actions: List[QtWidgets.QAction] = []  # Toolbar toggle actions for channel visibility
 
         self._build_ui()
         self._auto_load_definitions()
@@ -987,10 +1018,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plotCombos: List[SearchableCombo] = []
         for i in range(4):
-            lbl = QtWidgets.QLabel(f"Ch{i+1}")
-            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
+            lbl = ClickableLabel(f"Ch{i+1}")
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; padding:4px;")
             lbl.setAlignment(QtCore.Qt.AlignCenter)
             lbl.setFixedWidth(40)
+            lbl.clicked.connect(lambda idx=i: self._toggle_plot_channel(idx))
+            self.plotLabels.append(lbl)
 
             combo = SearchableCombo(half_width=False)
             combo.addItem("---")
@@ -1007,6 +1040,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotCombos.append(combo)
 
         pv.addWidget(addrWidget)
+
+        # Apply initial channel styles
+        for i in range(4):
+            self._apply_plot_channel_style(i)
 
         # Draw button
         self.btnDraw = QtWidgets.QPushButton("Draw")
@@ -1068,6 +1105,9 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.plot_canvas)
         pv.addWidget(self.plot_toolbar)
 
+        # Add channel toggle buttons to toolbar
+        self._add_channel_toggle_buttons()
+
         # Connect interactive zoom events after canvas creation
         self._connect_plot_events()
 
@@ -1080,6 +1120,147 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_layout.addWidget(plot_panel)  # Plot panel on right
 
         main_layout.addLayout(bottom_layout)
+
+    # ---------- Channel Visibility Toggle ----------
+    def _add_channel_toggle_buttons(self):
+        """Add CH1-CH4 toggle buttons to the navigation toolbar"""
+        # Get all existing actions (to insert before coordinate display)
+        existing_actions = self.plot_toolbar.actions()
+
+        # Insert separator before the last action (coordinate display)
+        if existing_actions:
+            self.plot_toolbar.insertSeparator(existing_actions[-1])
+
+        # Channel colors matching the plot lines
+        colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+
+        # Create toggle actions for each channel and insert before the last action
+        for i in range(4):
+            action = QtWidgets.QAction(f"CH{i+1}", self.plot_toolbar)
+            action.setCheckable(True)
+            action.setChecked(True)  # All visible by default
+            action.toggled.connect(lambda checked, idx=i: self._on_channel_toggle(idx, checked))
+
+            # Style the action button with channel color and bold font
+            action.setToolTip(f"Toggle CH{i+1} visibility")
+
+            # Store color as property for later use
+            action.setProperty("channel_color", colors[i])
+            action.setProperty("channel_index", i)
+
+            # Insert before last action (coordinate display)
+            if existing_actions:
+                self.plot_toolbar.insertAction(existing_actions[-1], action)
+            else:
+                self.plot_toolbar.addAction(action)
+
+            self.ch_actions.append(action)
+
+        # Apply initial styling to all channel buttons
+        self._update_channel_button_styles()
+
+    def _on_channel_toggle(self, idx: int, checked: bool):
+        """Handle channel visibility toggle from toolbar"""
+        # Set line visibility
+        self.plot_lines[idx].set_visible(checked)
+
+        # Update button styling
+        self._update_channel_button_styles()
+
+        # Rebuild legend with only visible channels
+        handles = [ln for ln in self.plot_lines if ln.get_visible()]
+        labels = [f"Ch{i+1}" for i, ln in enumerate(self.plot_lines) if ln.get_visible()]
+
+        # Remove old legend if exists
+        if self.plot_ax.legend_:
+            self.plot_ax.legend_.remove()
+
+        # Create new legend with only visible channels
+        if handles:  # Only create legend if there are visible channels
+            self.plot_ax.legend(handles, labels, loc='upper left',
+                              facecolor=Colors.BG_PANEL,
+                              edgecolor=Colors.BORDER_NORMAL,
+                              labelcolor=Colors.TEXT_PRIMARY)
+
+        # Redraw canvas
+        self.plot_canvas.draw_idle()
+
+    def _update_channel_button_styles(self):
+        """Update toolbar button styles based on visibility state"""
+        # Find all QToolButtons in the toolbar that correspond to our channel actions
+        for widget in self.plot_toolbar.findChildren(QtWidgets.QToolButton):
+            # Check if this button corresponds to one of our channel actions
+            action = widget.defaultAction()
+            if action in self.ch_actions:
+                color = action.property("channel_color")
+
+                if action.isChecked():
+                    # Visible: bold font with channel color
+                    widget.setStyleSheet(f"""
+                        QToolButton {{
+                            color: {color};
+                            font-weight: bold;
+                            background: {Colors.BG_INPUT};
+                            border: 1px solid {Colors.BORDER_NORMAL};
+                            border-radius: 3px;
+                            padding: 3px;
+                            margin: 1px;
+                        }}
+                        QToolButton:hover {{
+                            background: {Colors.BTN_PRIMARY_HOVER};
+                            border-color: {Colors.BORDER_FOCUS};
+                        }}
+                        QToolButton:pressed {{
+                            background: {Colors.DEEP_BLUE};
+                        }}
+                    """)
+                else:
+                    # Hidden: grey color, normal font
+                    widget.setStyleSheet(f"""
+                        QToolButton {{
+                            color: #808A98;
+                            font-weight: normal;
+                            background: {Colors.BG_INPUT};
+                            border: 1px solid {Colors.BORDER_NORMAL};
+                            border-radius: 3px;
+                            padding: 3px;
+                            margin: 1px;
+                        }}
+                        QToolButton:hover {{
+                            background: {Colors.BTN_PRIMARY_HOVER};
+                            border-color: {Colors.BORDER_FOCUS};
+                        }}
+                    """)
+
+    # ---------- Channel Enable/Disable ----------
+    def _toggle_plot_channel(self, i: int):
+        """Toggle enable/disable state for plot channel i"""
+        self.plot_active[i] = not self.plot_active[i]
+        self._apply_plot_channel_style(i)
+
+    def _apply_plot_channel_style(self, i: int):
+        """Apply visual style to channel label and combobox based on enabled state"""
+        if self.plot_active[i]:
+            # Enabled: normal colors
+            self.plotLabels[i].setStyleSheet(
+                f"color:{Colors.TEXT_LABEL}; font-weight:700; "
+                f"border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; padding:4px;"
+            )
+            self.plotCombos[i].setEnabled(True)
+            # Reset combobox to normal styling
+            self.plotCombos[i].setStyleSheet("font-size:12px; font-weight:500;")
+        else:
+            # Disabled: greyed out
+            self.plotLabels[i].setStyleSheet(
+                "color:#808A98; font-weight:700; "
+                "border:2px solid #808A98; border-radius:4px; padding:4px;"
+            )
+            self.plotCombos[i].setEnabled(False)
+            # Apply grey border to combobox
+            self.plotCombos[i].setStyleSheet(
+                f"font-size:12px; font-weight:500; "
+                f"border:2px solid #808A98;"
+            )
 
     # ---------- Plot Event Connections ----------
     def _connect_plot_events(self):
@@ -1569,12 +1750,16 @@ class MainWindow(QtWidgets.QMainWindow):
                             addresses.append(None)
                 return addresses
 
+            def get_active():
+                """Get list of enabled channel indices"""
+                return [idx for idx, ok in enumerate(self.plot_active) if ok]
+
             def get_cfg():
                 slave = int(self.edSlave.text())
                 timeout = self.timeout_ms / 1000.0
                 return slave, timeout
 
-            self.plot_worker = PlotWorker(self.serial_mgr, get_addresses, get_cfg, self)
+            self.plot_worker = PlotWorker(self.serial_mgr, get_addresses, get_active, get_cfg, self)
             self.plot_worker.sigData.connect(self._on_plot_data)
             self.plot_worker.sigStatus.connect(self._set_status)
             self.plot_worker.start()
