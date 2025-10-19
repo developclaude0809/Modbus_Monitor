@@ -799,16 +799,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plotLabels: List[ClickableLabel] = []  # References to CH1-CH4 labels
         self.ch_actions: List[QtWidgets.QAction] = []  # Toolbar toggle actions for channel visibility
 
-        # Cursor tool state
-        self.cursor_active = False
-        self.cursor_cid = None  # Motion event connection ID
-        self.cursor_vline = None  # Vertical crosshair line
-        self.cursor_hline = None  # Horizontal crosshair line
+        # Cursor tool removed
 
         # Probe tool state
         self._probe_enabled = False
         self._probe_cid = None
         self._probe_artists = []
+        self.probeValueLabels: List[QtWidgets.QLabel] = []  # Per-channel probe value display labels
 
         self._build_ui()
         self._auto_load_definitions()
@@ -1057,6 +1054,18 @@ class MainWindow(QtWidgets.QMainWindow):
             addrLayout.addWidget(combo, row, col + 1)
             self.plotCombos.append(combo)
 
+            # Add probe value label below each channel's combobox
+            probe_val = QtWidgets.QLabel("—")
+            probe_val.setAlignment(QtCore.Qt.AlignCenter)
+            probe_val.setFixedHeight(30)
+            colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+            probe_val.setStyleSheet(
+                f"color:{colors[i]}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
+                f"border:1px solid {colors[i]}; border-radius:4px; background:{Colors.BG_INPUT};"
+            )
+            addrLayout.addWidget(probe_val, 1, col, 1, 2)
+            self.probeValueLabels.append(probe_val)
+
         pv.addWidget(addrWidget)
 
         # Apply initial channel styles
@@ -1073,7 +1082,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(8, 5), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(8, 4.9), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
@@ -1134,8 +1143,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-        # Add cursor tool button to toolbar
-        self._add_cursor_button()
+        # Cursor tool removed
 
         # Add probe tool button to toolbar
         self._add_probe_button()
@@ -1174,103 +1182,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_toolbar.removeAction(action)
 
     # ---------- Cursor Tool ----------
-    def _add_cursor_button(self):
-        """Add Cursor tool button to toolbar"""
-        # Insert before the last action (coordinate display)
-        existing_actions = self.plot_toolbar.actions()
-
-        # Add separator before cursor button
-        if existing_actions:
-            self.plot_toolbar.insertSeparator(existing_actions[-1])
-
-        # Create cursor toggle action
-        cursor_action = QtWidgets.QAction("Cursor", self.plot_toolbar)
-        cursor_action.setCheckable(True)
-        cursor_action.setChecked(False)
-        cursor_action.setToolTip("Toggle crosshair cursor with live coordinates")
-        cursor_action.toggled.connect(self._toggle_cursor)
-
-        # Insert before last action
-        if existing_actions:
-            self.plot_toolbar.insertAction(existing_actions[-1], cursor_action)
-        else:
-            self.plot_toolbar.addAction(cursor_action)
-
-        # Store reference
-        self.cursor_action = cursor_action
-
-    def _toggle_cursor(self, checked: bool):
-        """Toggle crosshair cursor tool"""
-        self.cursor_active = checked
-
-        if checked:
-            # Enable cursor mode
-            # Create crosshair lines if they don't exist
-            if self.cursor_vline is None:
-                self.cursor_vline = self.plot_ax.axvline(color=Colors.SOFT_YELLOW, linewidth=1, linestyle='--', alpha=0.7)
-                self.cursor_vline.set_visible(False)
-            if self.cursor_hline is None:
-                self.cursor_hline = self.plot_ax.axhline(color=Colors.SOFT_YELLOW, linewidth=1, linestyle='--', alpha=0.7)
-                self.cursor_hline.set_visible(False)
-
-            # Connect motion event
-            self.cursor_cid = self.plot_canvas.mpl_connect('motion_notify_event', self._on_cursor_move)
-
-            # Change canvas cursor to cross
-            self.plot_canvas.setCursor(QtCore.Qt.CrossCursor)
-
-            self._set_status("Cursor tool enabled - Move mouse over plot to see coordinates")
-        else:
-            # Disable cursor mode
-            # Disconnect motion event
-            if self.cursor_cid is not None:
-                self.plot_canvas.mpl_disconnect(self.cursor_cid)
-                self.cursor_cid = None
-
-            # Hide crosshair lines
-            if self.cursor_vline is not None:
-                self.cursor_vline.set_visible(False)
-            if self.cursor_hline is not None:
-                self.cursor_hline.set_visible(False)
-
-            # Restore normal cursor
-            self.plot_canvas.setCursor(QtCore.Qt.ArrowCursor)
-
-            # Redraw canvas to remove crosshairs
-            self.plot_canvas.draw_idle()
-
-            self._set_status("Cursor tool disabled")
-
-    def _on_cursor_move(self, event):
-        """Handle mouse movement for cursor tool"""
-        if not self.cursor_active:
-            return
-
-        # Only show crosshair when mouse is inside the plot
-        if event.inaxes != self.plot_ax:
-            if self.cursor_vline is not None:
-                self.cursor_vline.set_visible(False)
-            if self.cursor_hline is not None:
-                self.cursor_hline.set_visible(False)
-            self.plot_canvas.draw_idle()
-            return
-
-        # Get cursor position
-        x, y = event.xdata, event.ydata
-
-        # Update crosshair lines
-        if self.cursor_vline is not None:
-            self.cursor_vline.set_xdata([x, x])
-            self.cursor_vline.set_visible(True)
-        if self.cursor_hline is not None:
-            self.cursor_hline.set_ydata([y, y])
-            self.cursor_hline.set_visible(True)
-
-        # Update status bar with coordinates
-        self._set_status(f"Cursor: X={x:.3f}, Y={y:.2f}")
-
-        # Redraw canvas
-        self.plot_canvas.draw_idle()
+    # Removed
 
     # ---------- Probe Tool ----------
     def _add_probe_button(self):
@@ -1279,7 +1191,7 @@ class MainWindow(QtWidgets.QMainWindow):
         existing_actions = self.plot_toolbar.actions()
 
         # Create probe toggle action
-        self._probe_action = QtWidgets.QAction("Probe", self.plot_toolbar)
+        self._probe_action = QtWidgets.QAction("PB", self.plot_toolbar)
         self._probe_action.setCheckable(True)
         self._probe_action.setChecked(False)
         self._probe_action.setToolTip("Click to probe all active channel values at a time point")
@@ -1290,6 +1202,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_toolbar.insertAction(existing_actions[-1], self._probe_action)
         else:
             self.plot_toolbar.addAction(self._probe_action)
+
+        # Ensure the toolbar shows full text label with bold font and initialize style
+        self._ensure_action_text_only(self._probe_action)
+        self._update_toggle_action_style(self._probe_action, active_color=Colors.ROSE_CORAL)
+
+    def _set_probe_label(self, idx: int, text: str, active: bool = True):
+        """Update one channel's probe display text and color."""
+        if 0 <= idx < len(self.probeValueLabels):
+            lbl = self.probeValueLabels[idx]
+            colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+            color = colors[idx] if active else "#808A98"
+            lbl.setText(text)
+            lbl.setStyleSheet(f"color:{color}; font-weight:700; font-size:12px; padding:0px; margin:0px;")
+
+    def _clear_probe_labels(self):
+        """Reset all probe labels."""
+        for i in range(4):
+            self._set_probe_label(i, "—", active=True)
 
     def _toggle_probe_mode(self, on: bool):
         """Toggle probe mode on/off"""
@@ -1305,7 +1235,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._probe_cid = None
             # Clear any existing probe graphics
             self._clear_probe_artists()
+            # Clear probe value labels
+            self._clear_probe_labels()
             self._set_status("Probe tool disabled")
+
+        # Update visual style for the toolbar button based on state
+        self._update_toggle_action_style(self._probe_action, active_color=Colors.ROSE_CORAL)
 
     def _clear_probe_artists(self):
         """Remove all probe graphics from the plot"""
@@ -1354,6 +1289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(4):
             # Check if channel is active (enabled for plotting)
             if not self.plot_active[i]:
+                self._set_probe_label(i, "OFF", active=False)
                 continue
 
             times = self.plot_data[i]['time']
@@ -1361,12 +1297,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
             if not times:
                 status_parts.append(f"CH{i+1}=N/A")
+                self._set_probe_label(i, "N/A", active=False)
                 continue
 
             # Find nearest time index
             idx = self._nearest_index(times, x_probe)
             if idx is None:
                 status_parts.append(f"CH{i+1}=N/A")
+                self._set_probe_label(i, "N/A", active=False)
                 continue
 
             # Get the value at that index
@@ -1381,6 +1319,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Add to status message
             status_parts.append(f"CH{i+1}={y_val:5d}")
+
+            # Update per-channel probe label
+            self._set_probe_label(i, f"{y_val: d}", active=True)
 
         # Update status bar
         self._set_status(", ".join(status_parts))
@@ -1433,6 +1374,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Update button styling
         self._update_channel_button_styles()
+
+        # Update probe label state when toggling channel visibility
+        if checked:
+            self._set_probe_label(idx, "—", active=True)
+        else:
+            self._set_probe_label(idx, "OFF", active=False)
 
         # Rebuild legend with only visible channels
         handles = [ln for ln in self.plot_lines if ln.get_visible()]
@@ -1498,6 +1445,94 @@ class MainWindow(QtWidgets.QMainWindow):
                             border-color: {Colors.BORDER_FOCUS};
                         }}
                     """)
+
+    # ---------- Toolbar Action Styling Helpers ----------
+    def _ensure_action_text_only(self, action: QtWidgets.QAction):
+        """Ensure the toolbar shows text for the given action, with bold font."""
+        try:
+            btn = self.plot_toolbar.widgetForAction(action)
+        except Exception:
+            btn = None
+
+        if btn is None:
+            for w in self.plot_toolbar.findChildren(QtWidgets.QToolButton):
+                if w.defaultAction() is action:
+                    btn = w
+                    break
+
+        if isinstance(btn, QtWidgets.QToolButton):
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    font-weight: bold;
+                    background: {Colors.BG_INPUT};
+                    color: {Colors.TEXT_PRIMARY};
+                    border: 1px solid {Colors.BORDER_NORMAL};
+                    border-radius: 3px;
+                    padding: 3px;
+                    margin: 1px;
+                }}
+                QToolButton:hover {{
+                    background: {Colors.BTN_PRIMARY_HOVER};
+                    border-color: {Colors.BORDER_FOCUS};
+                }}
+                QToolButton:pressed {{
+                    background: {Colors.DEEP_BLUE};
+                }}
+            """)
+
+    def _update_toggle_action_style(self, action: QtWidgets.QAction, active_color: str):
+        """Color the action's toolbutton when checked, keep neutral when not."""
+        try:
+            btn = self.plot_toolbar.widgetForAction(action)
+        except Exception:
+            btn = None
+
+        if btn is None:
+            for w in self.plot_toolbar.findChildren(QtWidgets.QToolButton):
+                if w.defaultAction() is action:
+                    btn = w
+                    break
+
+        if isinstance(btn, QtWidgets.QToolButton):
+            if action.isChecked():
+                btn.setStyleSheet(f"""
+                    QToolButton {{
+                        font-weight: bold;
+                        color: {active_color};
+                        background: {Colors.BG_INPUT};
+                        border: 1px solid {Colors.BORDER_FOCUS};
+                        border-radius: 3px;
+                        padding: 3px;
+                        margin: 1px;
+                    }}
+                    QToolButton:hover {{
+                        background: {Colors.BTN_PRIMARY_HOVER};
+                        border-color: {Colors.BORDER_FOCUS};
+                    }}
+                    QToolButton:pressed {{
+                        background: {Colors.DEEP_BLUE};
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QToolButton {{
+                        font-weight: bold;
+                        color: {Colors.TEXT_PRIMARY};
+                        background: {Colors.BG_INPUT};
+                        border: 1px solid {Colors.BORDER_NORMAL};
+                        border-radius: 3px;
+                        padding: 3px;
+                        margin: 1px;
+                    }}
+                    QToolButton:hover {{
+                        background: {Colors.BTN_PRIMARY_HOVER};
+                        border-color: {Colors.BORDER_FOCUS};
+                    }}
+                    QToolButton:pressed {{
+                        background: {Colors.DEEP_BLUE};
+                    }}
+                """)
 
     # ---------- Channel Enable/Disable ----------
     def _toggle_plot_channel(self, i: int):
