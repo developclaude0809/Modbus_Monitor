@@ -1111,6 +1111,14 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.plot_canvas)
         pv.addWidget(self.plot_toolbar)
 
+        # Seed the initial Home baseline for toolbar navigation
+        try:
+            self.plot_canvas.draw()
+            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                self.plot_toolbar.push_current()
+        except Exception:
+            pass
+
         # Add channel toggle buttons to toolbar
         self._add_channel_toggle_buttons()
 
@@ -1268,6 +1276,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"border:2px solid #808A98;"
             )
 
+    # ---------- Toolbar Integration Helper ----------
+    def _toolbar_push_current(self):
+        """
+        Push current view to Matplotlib NavigationToolbar's view stack.
+        Call this BEFORE changing xlim/ylim/autoscale so Back/Forward/Home can restore states.
+        """
+        try:
+            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                self.plot_toolbar.push_current()
+        except Exception:
+            pass
+
     # ---------- Plot Event Connections ----------
     def _connect_plot_events(self):
         """Connect interactive zoom events to the plot canvas"""
@@ -1290,6 +1310,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Handle mouse wheel zoom centered on cursor position"""
         if event.inaxes != self.plot_ax:
             return
+
+        # Push current view to toolbar history before zooming
+        self._toolbar_push_current()
 
         # Get current axis limits
         cur_xlim = self.plot_ax.get_xlim()
@@ -1334,6 +1357,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Double-click: reset to auto-scale
         if event.dblclick:
+            self._toolbar_push_current()
             self.manual_zoom_active = False
             self.zoom_history.clear()
             self.plot_ax.relim()
@@ -1344,6 +1368,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Right-click: zoom out one level
         if event.button == 3:  # Right mouse button
+            self._toolbar_push_current()
             if self.zoom_history:
                 xlim, ylim = self.zoom_history.pop()
                 self.plot_ax.set_xlim(xlim)
@@ -1426,6 +1451,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # Push current view to history stack
             self.zoom_history.append((self.plot_ax.get_xlim(), self.plot_ax.get_ylim()))
+
+        # Push current view to toolbar history before applying new limits
+        self._toolbar_push_current()
 
         # Apply zoom to selected rectangle
         self.plot_ax.set_xlim(sorted([x0, x1]))
