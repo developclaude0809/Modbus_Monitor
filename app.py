@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import struct
+import bisect
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
 
@@ -798,6 +799,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plotLabels: List[ClickableLabel] = []  # References to CH1-CH4 labels
         self.ch_actions: List[QtWidgets.QAction] = []  # Toolbar toggle actions for channel visibility
 
+        # Cursor tool state
+        self.cursor_active = False
+        self.cursor_cid = None  # Motion event connection ID
+        self.cursor_vline = None  # Vertical crosshair line
+        self.cursor_hline = None  # Horizontal crosshair line
+
+        # Probe tool state
+        self._probe_enabled = False
+        self._probe_cid = None
+        self._probe_artists = []
+
         self._build_ui()
         self._auto_load_definitions()
         self._refresh_ports()
@@ -1111,6 +1123,9 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.plot_canvas)
         pv.addWidget(self.plot_toolbar)
 
+        # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save
+        self._filter_toolbar_buttons()
+
         # Seed the initial Home baseline for toolbar navigation
         try:
             self.plot_canvas.draw()
@@ -1118,6 +1133,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_toolbar.push_current()
         except Exception:
             pass
+
+        # Add cursor tool button to toolbar
+        self._add_cursor_button()
+
+        # Add probe tool button to toolbar
+        self._add_probe_button()
 
         # Add channel toggle buttons to toolbar
         self._add_channel_toggle_buttons()
@@ -1134,6 +1155,238 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_layout.addWidget(plot_panel)  # Plot panel on right
 
         main_layout.addLayout(bottom_layout)
+
+    # ---------- Toolbar Filtering ----------
+    def _filter_toolbar_buttons(self):
+        """Filter toolbar to show only Home, Pan, Zoom, Customize, and Save buttons"""
+        # Matplotlib NavigationToolbar2QT action texts to keep
+        keep_actions = ['Home', 'Pan', 'Zoom', 'Subplots', 'Customize', 'Save']
+
+        # Get all actions from the toolbar
+        all_actions = self.plot_toolbar.actions()
+
+        # Remove unwanted actions
+        for action in all_actions:
+            if action.isSeparator():
+                continue  # Keep separators
+            action_text = action.text().replace('&', '')  # Remove mnemonic
+            if action_text not in keep_actions:
+                self.plot_toolbar.removeAction(action)
+
+    # ---------- Cursor Tool ----------
+    def _add_cursor_button(self):
+        """Add Cursor tool button to toolbar"""
+        # Insert before the last action (coordinate display)
+        existing_actions = self.plot_toolbar.actions()
+
+        # Add separator before cursor button
+        if existing_actions:
+            self.plot_toolbar.insertSeparator(existing_actions[-1])
+
+        # Create cursor toggle action
+        cursor_action = QtWidgets.QAction("Cursor", self.plot_toolbar)
+        cursor_action.setCheckable(True)
+        cursor_action.setChecked(False)
+        cursor_action.setToolTip("Toggle crosshair cursor with live coordinates")
+        cursor_action.toggled.connect(self._toggle_cursor)
+
+        # Insert before last action
+        if existing_actions:
+            self.plot_toolbar.insertAction(existing_actions[-1], cursor_action)
+        else:
+            self.plot_toolbar.addAction(cursor_action)
+
+        # Store reference
+        self.cursor_action = cursor_action
+
+    def _toggle_cursor(self, checked: bool):
+        """Toggle crosshair cursor tool"""
+        self.cursor_active = checked
+
+        if checked:
+            # Enable cursor mode
+            # Create crosshair lines if they don't exist
+            if self.cursor_vline is None:
+                self.cursor_vline = self.plot_ax.axvline(color=Colors.SOFT_YELLOW, linewidth=1, linestyle='--', alpha=0.7)
+                self.cursor_vline.set_visible(False)
+            if self.cursor_hline is None:
+                self.cursor_hline = self.plot_ax.axhline(color=Colors.SOFT_YELLOW, linewidth=1, linestyle='--', alpha=0.7)
+                self.cursor_hline.set_visible(False)
+
+            # Connect motion event
+            self.cursor_cid = self.plot_canvas.mpl_connect('motion_notify_event', self._on_cursor_move)
+
+            # Change canvas cursor to cross
+            self.plot_canvas.setCursor(QtCore.Qt.CrossCursor)
+
+            self._set_status("Cursor tool enabled - Move mouse over plot to see coordinates")
+        else:
+            # Disable cursor mode
+            # Disconnect motion event
+            if self.cursor_cid is not None:
+                self.plot_canvas.mpl_disconnect(self.cursor_cid)
+                self.cursor_cid = None
+
+            # Hide crosshair lines
+            if self.cursor_vline is not None:
+                self.cursor_vline.set_visible(False)
+            if self.cursor_hline is not None:
+                self.cursor_hline.set_visible(False)
+
+            # Restore normal cursor
+            self.plot_canvas.setCursor(QtCore.Qt.ArrowCursor)
+
+            # Redraw canvas to remove crosshairs
+            self.plot_canvas.draw_idle()
+
+            self._set_status("Cursor tool disabled")
+
+    def _on_cursor_move(self, event):
+        """Handle mouse movement for cursor tool"""
+        if not self.cursor_active:
+            return
+
+        # Only show crosshair when mouse is inside the plot
+        if event.inaxes != self.plot_ax:
+            if self.cursor_vline is not None:
+                self.cursor_vline.set_visible(False)
+            if self.cursor_hline is not None:
+                self.cursor_hline.set_visible(False)
+            self.plot_canvas.draw_idle()
+            return
+
+        # Get cursor position
+        x, y = event.xdata, event.ydata
+
+        # Update crosshair lines
+        if self.cursor_vline is not None:
+            self.cursor_vline.set_xdata([x, x])
+            self.cursor_vline.set_visible(True)
+        if self.cursor_hline is not None:
+            self.cursor_hline.set_ydata([y, y])
+            self.cursor_hline.set_visible(True)
+
+        # Update status bar with coordinates
+        self._set_status(f"Cursor: X={x:.3f}, Y={y:.2f}")
+
+        # Redraw canvas
+        self.plot_canvas.draw_idle()
+
+    # ---------- Probe Tool ----------
+    def _add_probe_button(self):
+        """Add Probe tool button to toolbar"""
+        # Insert before the last action (coordinate display)
+        existing_actions = self.plot_toolbar.actions()
+
+        # Create probe toggle action
+        self._probe_action = QtWidgets.QAction("Probe", self.plot_toolbar)
+        self._probe_action.setCheckable(True)
+        self._probe_action.setChecked(False)
+        self._probe_action.setToolTip("Click to probe all active channel values at a time point")
+        self._probe_action.toggled.connect(self._toggle_probe_mode)
+
+        # Insert before last action (coordinate display)
+        if existing_actions:
+            self.plot_toolbar.insertAction(existing_actions[-1], self._probe_action)
+        else:
+            self.plot_toolbar.addAction(self._probe_action)
+
+    def _toggle_probe_mode(self, on: bool):
+        """Toggle probe mode on/off"""
+        self._probe_enabled = on
+        if on:
+            # Connect click event
+            self._probe_cid = self.plot_canvas.mpl_connect('button_press_event', self._on_probe_click)
+            self._set_status("Probe tool enabled - Click on plot to sample channel values")
+        else:
+            # Disconnect click event
+            if self._probe_cid is not None:
+                self.plot_canvas.mpl_disconnect(self._probe_cid)
+                self._probe_cid = None
+            # Clear any existing probe graphics
+            self._clear_probe_artists()
+            self._set_status("Probe tool disabled")
+
+    def _clear_probe_artists(self):
+        """Remove all probe graphics from the plot"""
+        for artist in self._probe_artists:
+            artist.remove()
+        self._probe_artists.clear()
+        self.plot_canvas.draw_idle()
+
+    def _nearest_index(self, arr, x):
+        """Find index of nearest value in sorted array using bisect"""
+        if not arr:
+            return None
+        idx = bisect.bisect_left(arr, x)
+        if idx == 0:
+            return 0
+        if idx == len(arr):
+            return len(arr) - 1
+        # Check which is closer: arr[idx-1] or arr[idx]
+        if abs(arr[idx - 1] - x) < abs(arr[idx] - x):
+            return idx - 1
+        return idx
+
+    def _on_probe_click(self, event):
+        """Handle click event to probe channel values"""
+        if not self._probe_enabled:
+            return
+        if event.inaxes != self.plot_ax:
+            return
+        if event.button != 1:  # Only left-click
+            return
+
+        # Get clicked X position
+        x_probe = event.xdata
+
+        # Clear previous probe
+        self._clear_probe_artists()
+
+        # Vertical guide line
+        vline = self.plot_ax.axvline(x_probe, color=Colors.ROSE_CORAL, linewidth=2, linestyle='-', alpha=0.8)
+        self._probe_artists.append(vline)
+
+        # Sample each active channel
+        channel_colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        status_parts = [f"Probe @ {x_probe:.3f}s →"]
+
+        for i in range(4):
+            # Check if channel is active (enabled for plotting)
+            if not self.plot_active[i]:
+                continue
+
+            times = self.plot_data[i]['time']
+            values = self.plot_data[i]['value']
+
+            if not times:
+                status_parts.append(f"CH{i+1}=N/A")
+                continue
+
+            # Find nearest time index
+            idx = self._nearest_index(times, x_probe)
+            if idx is None:
+                status_parts.append(f"CH{i+1}=N/A")
+                continue
+
+            # Get the value at that index
+            y_val = values[idx]
+            x_val = times[idx]
+
+            # Draw circle marker
+            marker = self.plot_ax.plot(x_val, y_val, 'o', color=channel_colors[i],
+                                      markersize=10, markeredgewidth=2,
+                                      markeredgecolor=Colors.CREAM_TINT)[0]
+            self._probe_artists.append(marker)
+
+            # Add to status message
+            status_parts.append(f"CH{i+1}={y_val:5d}")
+
+        # Update status bar
+        self._set_status(", ".join(status_parts))
+
+        # Redraw
+        self.plot_canvas.draw_idle()
 
     # ---------- Channel Visibility Toggle ----------
     def _add_channel_toggle_buttons(self):
@@ -1829,7 +2082,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_data[channel]['time'].append(elapsed)
             self.plot_data[channel]['value'].append(value)
 
-            # Keep only last 100 points per channel
+            # Keep only last 375 points per channel
             if len(self.plot_data[channel]['time']) > 375:
                 self.plot_data[channel]['time'].pop(0)
                 self.plot_data[channel]['value'].pop(0)
