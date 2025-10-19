@@ -64,6 +64,7 @@ class Colors:
     SOFT_YELLOW       = "#F4F27E"
     CREAM_TINT        = "#FFF5C2"
     ROSE_CORAL        = "#F87171"
+    BENIUKON          = "#E98B2A"
     BG_INPUT          = "#334155"
     BTN_TEXT_COLOR    = "#FFFFFF"
 
@@ -1034,9 +1035,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
         self.plotCombos: List[SearchableCombo] = []
+        channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
         for i in range(4):
             lbl = ClickableLabel(f"Ch{i+1}")
-            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; padding:4px;")
+            lbl.setStyleSheet(f"color:{channel_colors[i]}; font-weight:700; border:2px solid {channel_colors[i]}; border-radius:4px; padding:4px;")
             lbl.setAlignment(QtCore.Qt.AlignCenter)
             lbl.setFixedWidth(40)
             lbl.clicked.connect(lambda idx=i: self._toggle_plot_channel(idx))
@@ -1044,7 +1046,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             combo = SearchableCombo(half_width=False)
             combo.addItem("---")
-            combo.setStyleSheet("font-size:12px; font-weight:500;")
+            combo.setStyleSheet(f"font-size:12px; font-weight:500; border:2px solid {channel_colors[i]};")
             # Fit four label+combo pairs within the fixed panel width
             combo.setFixedWidth(160)
             combo.setFixedHeight(35)
@@ -1060,10 +1062,9 @@ class MainWindow(QtWidgets.QMainWindow):
             probe_val = QtWidgets.QLabel("—")
             probe_val.setAlignment(QtCore.Qt.AlignCenter)
             probe_val.setFixedHeight(30)
-            colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
             probe_val.setStyleSheet(
-                f"color:{colors[i]}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
-                f"border:1px solid {colors[i]}; border-radius:4px; background:{Colors.BG_INPUT};"
+                f"color:{channel_colors[i]}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
+                f"border:1px solid {channel_colors[i]}; border-radius:4px; background:{Colors.BG_INPUT};"
             )
             addrLayout.addWidget(probe_val, 1, col, 1, 2)
             self.probeValueLabels.append(probe_val)
@@ -1098,7 +1099,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Line objects for 4 channels
         self.plot_lines = []
-        colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
         for i, color in enumerate(colors):
             line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=2)
             self.plot_lines.append(line)
@@ -1168,9 +1169,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------- Toolbar Filtering ----------
     def _filter_toolbar_buttons(self):
-        """Filter toolbar to show only Home, Pan, Zoom, Customize, and Save buttons"""
+        """Filter toolbar to show only Home, Pan, Zoom, and Save buttons"""
         # Matplotlib NavigationToolbar2QT action texts to keep
-        keep_actions = ['Home', 'Pan', 'Zoom', 'Subplots', 'Customize', 'Save']
+        keep_actions = ['Home', 'Pan', 'Zoom', 'Save']
 
         # Get all actions from the toolbar
         all_actions = self.plot_toolbar.actions()
@@ -1213,10 +1214,13 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update one channel's probe display text and color."""
         if 0 <= idx < len(self.probeValueLabels):
             lbl = self.probeValueLabels[idx]
-            colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+            colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
             color = colors[idx] if active else "#808A98"
             lbl.setText(text)
-            lbl.setStyleSheet(f"color:{color}; font-weight:700; font-size:12px; padding:0px; margin:0px;")
+            lbl.setStyleSheet(
+                f"color:{color}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
+                f"border:1px solid {color}; border-radius:4px; background:{Colors.BG_INPUT};"
+            )
 
     def _clear_probe_labels(self):
         """Reset all probe labels."""
@@ -1285,7 +1289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._probe_artists.append(vline)
 
         # Sample each active channel
-        channel_colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
         status_parts = [f"Probe @ {x_probe:.3f}s →"]
 
         for i in range(4):
@@ -1342,7 +1346,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_toolbar.insertSeparator(existing_actions[-1])
 
         # Channel colors matching the plot lines
-        colors = [Colors.MIST_BLUE, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
 
         # Create toggle actions for each channel and insert before the last action
         for i in range(4):
@@ -1544,15 +1548,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_plot_channel_style(self, i: int):
         """Apply visual style to channel label and combobox based on enabled state"""
+        channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
         if self.plot_active[i]:
-            # Enabled: normal colors
+            # Enabled: use channel-specific color
             self.plotLabels[i].setStyleSheet(
-                f"color:{Colors.TEXT_LABEL}; font-weight:700; "
-                f"border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; padding:4px;"
+                f"color:{channel_colors[i]}; font-weight:700; "
+                f"border:2px solid {channel_colors[i]}; border-radius:4px; padding:4px;"
             )
             self.plotCombos[i].setEnabled(True)
-            # Reset combobox to normal styling
-            self.plotCombos[i].setStyleSheet("font-size:12px; font-weight:500;")
+            # Set combobox border to match channel color
+            self.plotCombos[i].setStyleSheet(f"font-size:12px; font-weight:500; border:2px solid {channel_colors[i]};")
         else:
             # Disabled: greyed out
             self.plotLabels[i].setStyleSheet(
