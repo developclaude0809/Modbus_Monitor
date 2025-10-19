@@ -14,10 +14,12 @@ import sys
 import time
 import struct
 import bisect
+import ctypes
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
 
 from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtGui import QIcon
 
 # ==================== DEFAULTS ====================
 # Centralized defaults for timing values (milliseconds)
@@ -2157,6 +2159,22 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(e)
 
 
+# ==================== Windows AppUserModelID & Resource Path ====================
+# Ensure Windows taskbar uses the app's own group and icon
+try:
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("yc.monitor.app.v1")
+except Exception:
+    pass  # Safe to ignore on non-Windows systems
+
+# Universal resource loader for PyInstaller (_MEIPASS)
+def resource_path(rel_path: str) -> str:
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, rel_path)
+    base = os.path.abspath(os.path.dirname(__file__))
+    return os.path.join(base, rel_path)
+
+
 # ==================== Entry ====================
 def main():
     """Application entry point"""
@@ -2262,7 +2280,12 @@ def main():
         """
     )
 
+    # Load and set application icon (works with PyInstaller)
+    ico_path = resource_path("icon/Icon_Monitor_App.ico")
+    app.setWindowIcon(QIcon(ico_path))  # Global app icon
+
     w = MainWindow()
+    w.setWindowIcon(QIcon(ico_path))  # Set on the main window too
     w.show()
     sys.exit(app.exec_())
 
