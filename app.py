@@ -173,6 +173,16 @@ class ModbusRTU:
         return ModbusRTU.build_frame(slave_id, 0x06, data)
 
     @staticmethod
+    def read_input_registers(slave_id: int, start_addr: int, quantity: int) -> bytes:
+        """Build read input registers request (0x04)"""
+        if not (1 <= slave_id <= 247):
+            raise ValueError(f"Invalid slave ID: {slave_id}")
+        if not (1 <= quantity <= 125):
+            raise ValueError(f"Invalid quantity: {quantity}")
+        data = struct.pack(">HH", start_addr, quantity)
+        return ModbusRTU.build_frame(slave_id, 0x04, data)
+
+    @staticmethod
     def parse_response(response: bytes, expected_slave: int, expected_func: int) -> Tuple[bool, Any]:
         """Parse Modbus response"""
         if len(response) < 5:
@@ -199,6 +209,17 @@ class ModbusRTU:
             return False, "Function mismatch"
 
         if func == 0x03:
+            byte_count = response[2]
+            expected_total = 5 + byte_count
+            if len(response) != expected_total:
+                return False, f"Length mismatch: got {len(response)}, expected {expected_total}"
+            data = response[3:-2]
+            if len(data) % 2 != 0:
+                return False, "Byte count not even"
+            values = [struct.unpack(">H", data[i:i+2])[0] for i in range(0, len(data), 2)]
+            return True, values
+
+        if func == 0x04:
             byte_count = response[2]
             expected_total = 5 + byte_count
             if len(response) != expected_total:
@@ -356,6 +377,7 @@ class PollWorker(QtCore.QThread):
     """Background thread for auto-polling registers"""
 
     sigRegister = QtCore.pyqtSignal(int, object, object)  # index, value|None, error|None
+    sigInputRegisters = QtCore.pyqtSignal(list, object)  # values|None, error|None
     sigStatus = QtCore.pyqtSignal(str)
 
     def __init__(self, serial_mgr: SerialManager, get_row_addr_callable, get_cfg_callable, parent=None):
@@ -364,6 +386,7 @@ class PollWorker(QtCore.QThread):
         self.get_row_addr = get_row_addr_callable  # returns addr int or None for row
         self.get_cfg = get_cfg_callable            # returns (slave_id:int, timeout:float, interval:float)
         self._running = True
+        self._cycle_counter = 0
 
     def stop(self):
         """Stop the polling thread"""
@@ -379,6 +402,7 @@ class PollWorker(QtCore.QThread):
                 time.sleep(1.0)
                 continue
 
+            # Poll 10 holding registers (0x03)
             for i in range(10):
                 if not self._running:
                     break
@@ -399,6 +423,24 @@ class PollWorker(QtCore.QThread):
 
                 except Exception as e:
                     self.sigRegister.emit(i, None, str(e))
+
+            # Increment cycle counter
+            self._cycle_counter += 1
+
+            # Every 20 cycles, read 8 input registers (0x04) - 20:1 ratio
+            if self._cycle_counter >= 20:
+                self._cycle_counter = 0
+                if self._running:
+                    try:
+                        req = ModbusRTU.read_input_registers(slave_id, 0x0000, 8)
+                        ok, result = self.serial_mgr.transact(req, slave_id, 0x04, timeout=timeout)
+                        if ok and isinstance(result, list) and len(result) == 8:
+                            self.sigInputRegisters.emit(result, None)
+                        else:
+                            err = result if isinstance(result, str) else "Read failed"
+                            self.sigInputRegisters.emit(None, err)
+                    except Exception as e:
+                        self.sigInputRegisters.emit(None, str(e))
 
             time.sleep(interval)
 
@@ -906,14 +948,60 @@ class MainWindow(QtWidgets.QMainWindow):
 
         main_layout.addWidget(uart_panel)
 
-        # Read Addresses Panel (left side of bottom layout)
-        right = QtWidgets.QFrame()
-        right.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        right.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Fix requested panel size
-        right.setFixedSize(500, 650)
-        right.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        rv = QtWidgets.QVBoxLayout(right)
+        # ========== Motor Control Panel ==========
+        motor_panel = QtWidgets.QFrame()
+        motor_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        motor_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        motor_panel.setFixedSize(500, 80)
+        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+
+        motor_layout = QtWidgets.QHBoxLayout(motor_panel)
+        motor_layout.setContentsMargins(12, 12, 12, 12)
+        motor_layout.setSpacing(10)
+
+        # Value input for motor control
+        self.edMotorValue = QtWidgets.QLineEdit()
+        self.edMotorValue.setText("0")
+        self.edMotorValue.setValidator(QtGui.QIntValidator(0, 65535, self))
+        self.edMotorValue.setFixedHeight(50)
+        self.edMotorValue.setStyleSheet(
+            f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; "
+            f"border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px; font-size:24px; font-weight:700;}} "
+            f"QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}"
+        )
+        self.edMotorValue.returnPressed.connect(self._send_motor_value)
+        motor_layout.addWidget(self.edMotorValue)
+
+        # Send button (success style)
+        self.btnMotorSend = QtWidgets.QPushButton("Send")
+        self.btnMotorSend.setFixedWidth(120)
+        self.btnMotorSend.setFixedHeight(50)
+        self.btnMotorSend.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:26px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}"
+        )
+        self.btnMotorSend.clicked.connect(self._send_motor_value)
+        motor_layout.addWidget(self.btnMotorSend)
+
+        # Stop button (danger style)
+        self.btnMotorStop = QtWidgets.QPushButton("Stop")
+        self.btnMotorStop.setFixedWidth(120)
+        self.btnMotorStop.setFixedHeight(50)
+        self.btnMotorStop.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:26px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}"
+        )
+        self.btnMotorStop.clicked.connect(self._stop_motor)
+        motor_layout.addWidget(self.btnMotorStop)
+
+        # ========== Read Addresses Panel ==========
+        RWpanel = QtWidgets.QFrame()
+        RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        RWpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        # Fix requested panel size (increased to fit all content without scroll)
+        RWpanel.setFixedSize(500, 700)
+        RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        rv = QtWidgets.QVBoxLayout(RWpanel)
         # Internal padding for right frame
         rv.setContentsMargins(12, 12, 12, 12)
         rv.setSpacing(10)
@@ -960,11 +1048,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         rv.addWidget(topRow)
 
-        # Scroll area with 10 rows
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        inner = QtWidgets.QWidget()
-        grid = QtWidgets.QGridLayout(inner)
+        # Register grid (10 rows) without scroll
+        gridWidget = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(gridWidget)
         # Internal padding and spacing inside the register grid
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setHorizontalSpacing(8)
@@ -973,7 +1059,6 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.setColumnStretch(0, 10)
         grid.setColumnStretch(1, 5)
         grid.setColumnStretch(2, 5)
-
 
         self.rowCombos: List[SearchableCombo] = []
         self.rowValues: List[QtWidgets.QLabel] = []
@@ -991,23 +1076,66 @@ class MainWindow(QtWidgets.QMainWindow):
 
             val = QtWidgets.QLabel("----")
             val.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-            val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
+            val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:14px;")
             grid.addWidget(val, r, 1)
             self.rowValues.append(val)
 
             edit = QtWidgets.QLineEdit()
             edit.setPlaceholderText("Enter value (0-65535)")
             edit.setValidator(QtGui.QIntValidator(0, 65535, self))
-            edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
+            edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
             edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
             grid.addWidget(edit, r, 2)
             self.rowEdits.append(edit)
 
-        grid.setRowStretch(10, 1)
-        inner.setLayout(grid)
-        scroll.setWidget(inner)
-        rv.addWidget(scroll)
+        rv.addWidget(gridWidget)
+
+        # Input Register Display (FC 0x04)
+        inputRegFrame = QtWidgets.QFrame()
+        inputRegFrame.setFixedHeight(180)
+        inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
+
+        # Create grid layout with 4 rows × 2 columns
+        inputGrid = QtWidgets.QGridLayout(inputRegFrame)
+        inputGrid.setContentsMargins(12, 12, 12, 12)
+        inputGrid.setHorizontalSpacing(8)
+        inputGrid.setVerticalSpacing(8)
+
+        # Add 8 input registers (4 rows × 2 columns)
+        self.inputRegValues: List[QtWidgets.QLabel] = []
+        for i in range(8):
+            row = i // 2  # 0,0,1,1,2,2,3,3
+            col = i % 2   # 0,1,0,1,0,1,0,1
+
+            # Create horizontal container for label + value
+            container = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(container)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)
+
+            # Label "INx"
+            lbl = QtWidgets.QLabel(f"IN{i}")
+            lbl.setFixedWidth(40)
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
+            hbox.addWidget(lbl)
+
+            # Value display
+            val = QtWidgets.QLabel("----")
+            val.setAlignment(QtCore.Qt.AlignCenter)
+            val.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:16px;"
+            )
+            hbox.addWidget(val)
+            self.inputRegValues.append(val)
+
+            # Add to grid
+            inputGrid.addWidget(container, row, col)
+
+        rv.addWidget(inputRegFrame)
 
         # Status bar
         self.status = QtWidgets.QStatusBar()
@@ -1018,7 +1146,8 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_panel = QtWidgets.QFrame()
         plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        plot_panel.setFixedSize(860, 650)
+        # Height matches left column total: Motor(150) + gap(8) + RWpanel(800) = 958
+        plot_panel.setFixedSize(860, 800)
         plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         pv = QtWidgets.QVBoxLayout(plot_panel)
         pv.setContentsMargins(2, 2, 2, 2)
@@ -1085,7 +1214,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(8, 4.9), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(8, 5.5), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
@@ -1160,9 +1289,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # Add all panels to main layout
         main_layout.addWidget(uart_panel)
 
+        # Create left column with Motor Control and Read Addresses panels
+        left_column = QtWidgets.QVBoxLayout()
+        left_column.setSpacing(8)
+        left_column.addWidget(motor_panel)  # Motor Control Panel on top
+        left_column.addWidget(RWpanel)  # Read Addresses Panel on bottom
+
+        # Create bottom layout with left column and plot panel
         bottom_layout = QtWidgets.QHBoxLayout()
         bottom_layout.setSpacing(8)
-        bottom_layout.addWidget(right)  # Read addresses panel on left
+        bottom_layout.addLayout(left_column)  # Left column (motor + read addresses)
         bottom_layout.addWidget(plot_panel)  # Plot panel on right
 
         main_layout.addLayout(bottom_layout)
@@ -1937,6 +2073,57 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._stop_plotting()
             self._start_polling()
 
+    # ---------- Motor Control ----------
+    def _send_motor_value(self):
+        """Send motor value (0-65535) to register 0x0102 using FC 0x06."""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+        try:
+            slave_id = int(self.edSlave.text())
+            timeout = self.timeout_ms / 1000.0
+
+            txt = self.edMotorValue.text().strip()
+            if not txt:
+                raise ValueError("Please enter a motor value (0-65535)")
+            value = int(txt)
+            if not (0 <= value <= 65535):
+                raise ValueError("Motor value must be between 0 and 65535")
+
+            addr = 0x0102
+            req = ModbusRTU.write_single_register(slave_id, addr, value)
+            ok, result = self.serial_mgr.transact(req, slave_id, 0x06, timeout=timeout, post_quiet_ms=100)
+            if not ok:
+                raise RuntimeError(result)
+
+            # Clear on success per spec
+            self.edMotorValue.clear()
+            self._set_status(f"Motor command sent: addr 0x{addr:04X} = {value}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Motor Control Error", str(e))
+            self._set_status(f"Motor control failed: {e}")
+
+    def _stop_motor(self):
+        """Send 0x0000 to register 0x0102 (Stop)."""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+        try:
+            slave_id = int(self.edSlave.text())
+            timeout = self.timeout_ms / 1000.0
+            addr = 0x0102
+            value = 0x0000
+            req = ModbusRTU.write_single_register(slave_id, addr, value)
+            ok, result = self.serial_mgr.transact(req, slave_id, 0x06, timeout=timeout, post_quiet_ms=100)
+            if not ok:
+                raise RuntimeError(result)
+
+            # Do not clear input per spec
+            self._set_status(f"Motor STOP sent: addr 0x{addr:04X} = {value}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Motor Control Error", str(e))
+            self._set_status(f"Motor control failed: {e}")
+
     def _start_polling(self):
         """Start auto-polling"""
         if not self.serial_mgr.connected:
@@ -1964,6 +2151,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.worker = PollWorker(self.serial_mgr, get_row_addr, get_cfg, self)
             self.worker.sigRegister.connect(self._on_register_update)
+            self.worker.sigInputRegisters.connect(self._on_input_registers_update)
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
@@ -1980,6 +2168,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
+        # Reset input register displays
+        for i in range(8):
+            self.inputRegValues[i].setText("----")
+            self.inputRegValues[i].setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:14px;"
+            )
         self.btnPolling.setText("Start")
         self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.BTN_SUCCESS_HOVER};}}")
         self._set_status("Polling stopped")
@@ -1994,6 +2190,28 @@ class MainWindow(QtWidgets.QMainWindow):
             text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
             self.rowValues[index].setText(text)
             self.rowValues[index].setStyleSheet(f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
+
+    @QtCore.pyqtSlot(list, object)
+    def _on_input_registers_update(self, values: Optional[List[int]], error: Optional[str]):
+        """Update input register displays from polling thread"""
+        if values is not None and len(values) == 8:
+            for i, val in enumerate(values):
+                self.inputRegValues[i].setText(str(val))
+                self.inputRegValues[i].setStyleSheet(
+                    f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                    f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                    f"font-weight:600; font-size:14px;"
+                )
+        else:
+            # Error case
+            for i in range(8):
+                text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
+                self.inputRegValues[i].setText(text)
+                self.inputRegValues[i].setStyleSheet(
+                    f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; "
+                    f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
+                    f"font-weight:600; font-size:14px;"
+                )
 
     # ---------- Write ----------
     def _write_register(self, index: int):
