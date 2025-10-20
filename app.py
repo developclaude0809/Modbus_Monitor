@@ -17,6 +17,7 @@ import bisect
 import ctypes
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
+from dataclasses import dataclass
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
@@ -238,6 +239,26 @@ class ModbusRTU:
 
         # fallback raw
         return True, response[2:-2]
+
+
+# ==================== Input Register Definition ====================
+@dataclass
+class InputRegDef:
+    """Definition for a single 0x04 input register (IN0..IN7)"""
+    title: str              # Display title (e.g., "Motor Temp", "IN0")
+    fmt: str                # "value" or "bitstatus"
+    ratio: float            # Multiplier for value display (default 1.0)
+    show: Any               # For "value": "int16"|"uint16"; For "bitstatus": "1/0" or list of labels
+
+    @staticmethod
+    def create_default(index: int) -> 'InputRegDef':
+        """Create default definition for INx"""
+        return InputRegDef(
+            title=f"IN{index}",
+            fmt="value",
+            ratio=1.0,
+            show="int16"
+        )
 
 
 # ==================== Serial Manager ====================
@@ -821,7 +842,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Modbus RTU Controller")
-        self.resize(1400, 750)
+        self.resize(1600, 900)
 
         self.serial_mgr = SerialManager(self)
         self.addr_items: List[str] = []  # ["000_name", ...]
@@ -858,6 +879,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._build_ui()
         self._auto_load_definitions()
+        self._load_input_defs()  # Load 0x04 input register definitions
+        self._update_input_titles()  # Update UI labels with custom titles
         self._refresh_ports()
 
     # ---------- UI Build ----------
@@ -956,7 +979,7 @@ class MainWindow(QtWidgets.QMainWindow):
         motor_panel = QtWidgets.QFrame()
         motor_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         motor_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        motor_panel.setFixedSize(500, 80)
+        motor_panel.setFixedSize(650, 80)
         motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
 
         motor_layout = QtWidgets.QHBoxLayout(motor_panel)
@@ -1003,18 +1026,18 @@ class MainWindow(QtWidgets.QMainWindow):
         RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         RWpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         # Fix requested panel size (increased to fit all content without scroll)
-        RWpanel.setFixedSize(500, 700)
+        RWpanel.setFixedSize(650, 800)
         RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         rv = QtWidgets.QVBoxLayout(RWpanel)
         # Internal padding for right frame
-        rv.setContentsMargins(12, 12, 12, 12)
-        rv.setSpacing(6)
+        rv.setContentsMargins(3, 1, 3, 1)
+        rv.setSpacing(0)  # No spacing - widgets will touch each other vertically
 
         # Top row: Start button, ID, Timeout, Poll Interval in horizontal layout
         topRow = QtWidgets.QWidget()
         topLayout = QtWidgets.QHBoxLayout(topRow)
-        topLayout.setSpacing(8)
-        topLayout.setContentsMargins(8, 8, 8, 4)
+        topLayout.setSpacing(0)
+        topLayout.setContentsMargins(6, 0, 6, 0)
 
         # Start/Stop Polling button
         self.btnPolling = QtWidgets.QPushButton("Start")
@@ -1056,9 +1079,9 @@ class MainWindow(QtWidgets.QMainWindow):
         gridWidget = QtWidgets.QWidget()
         grid = QtWidgets.QGridLayout(gridWidget)
         # Internal padding and spacing inside the register grid
-        grid.setContentsMargins(8, 8, 8, 8)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
+        grid.setContentsMargins(5, 5, 5, 5)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(15)  # Increased from 10 to 15 for taller grid
         # Column stretch ratio: address_list : read_value : enter_value = 10 : 5 : 5
         grid.setColumnStretch(0, 10)
         grid.setColumnStretch(1, 5)
@@ -1097,16 +1120,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Input Register Display (FC 0x04)
         inputRegFrame = QtWidgets.QFrame()
-        inputRegFrame.setFixedHeight(180)
+        inputRegFrame.setFixedHeight(230)
         inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
 
         # Create grid layout with 4 rows × 2 columns
         inputGrid = QtWidgets.QGridLayout(inputRegFrame)
         inputGrid.setContentsMargins(12, 12, 12, 12)
         inputGrid.setHorizontalSpacing(8)
-        inputGrid.setVerticalSpacing(8)
+        inputGrid.setVerticalSpacing(16)
 
         # Add 8 input registers (4 rows × 2 columns)
+        self.inputRegLabels: List[QtWidgets.QLabel] = []  # Store title labels
         self.inputRegValues: List[QtWidgets.QLabel] = []
         for i in range(8):
             row = i // 2  # 0,0,1,1,2,2,3,3
@@ -1118,12 +1142,13 @@ class MainWindow(QtWidgets.QMainWindow):
             hbox.setContentsMargins(0, 0, 0, 0)
             hbox.setSpacing(8)
 
-            # Label "INx"
+            # Label "INx" (will be updated from definition file)
             lbl = QtWidgets.QLabel(f"IN{i}")
-            lbl.setFixedWidth(40)
-            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setFixedWidth(130)  # Increased width to accommodate custom titles
+            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
             lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
             hbox.addWidget(lbl)
+            self.inputRegLabels.append(lbl)  # Store for later title updates
 
             # Value display
             val = QtWidgets.QLabel("----")
@@ -1151,7 +1176,7 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         # Height matches left column total: Motor(150) + gap(8) + RWpanel(800) = 958
-        plot_panel.setFixedSize(860, 800)
+        plot_panel.setFixedSize(910, 890)
         plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         pv = QtWidgets.QVBoxLayout(plot_panel)
         pv.setContentsMargins(2, 2, 2, 2)
@@ -1218,7 +1243,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
         # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(8, 5.5), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_figure = Figure(figsize=(8, 6), dpi=100, facecolor=Colors.BG_PANEL)
         self.plot_canvas = FigureCanvas(self.plot_figure)
         self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
         self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
@@ -1332,9 +1357,6 @@ class MainWindow(QtWidgets.QMainWindow):
             action_text = action.text().replace('&', '')  # Remove mnemonic
             if action_text not in keep_actions:
                 self.plot_toolbar.removeAction(action)
-
-    # ---------- Cursor Tool ----------
-    # Removed
 
     # ---------- Probe Tool ----------
     def _add_probe_button(self):
@@ -2004,6 +2026,80 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
+    def _load_input_defs(self):
+        """Load 0x04 input register definitions from __address_04def.ddata"""
+        # Initialize with defaults for all 8 input registers
+        self.input_defs = [InputRegDef.create_default(i) for i in range(8)]
+
+        try:
+            def_path = Path('./setting/__address_04def.ddata')
+            if not def_path.exists():
+                return  # Use defaults
+
+            with open(def_path, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f if line.strip()]
+
+            # Only use first 8 lines (IN0..IN7)
+            for idx, line in enumerate(lines[:8]):
+                if idx >= 8:
+                    break
+
+                # Parse CSV-like format: [Title],[Format],[Ratio],[Show]
+                parts = [p.strip() for p in line.split(',')]
+
+                # Extract fields with defaults
+                title = parts[0] if len(parts) > 0 and parts[0] else f"IN{idx}"
+                fmt = parts[1].lower() if len(parts) > 1 and parts[1] else "value"
+
+                # Validate format
+                if fmt not in ("value", "bitstatus"):
+                    fmt = "value"
+
+                # Parse ratio
+                ratio = 1.0
+                if len(parts) > 2 and parts[2]:
+                    try:
+                        ratio = float(parts[2])
+                    except ValueError:
+                        ratio = 1.0
+
+                # Parse show field
+                show_raw = parts[3] if len(parts) > 3 and parts[3] else ""
+
+                if fmt == "value":
+                    # For value format: default "int16", or "uint16"
+                    show = show_raw if show_raw in ("int16", "uint16") else "int16"
+                elif fmt == "bitstatus":
+                    # For bitstatus: default "1/0" or custom labels
+                    if not show_raw or show_raw == "1/0":
+                        show = "1/0"
+                    else:
+                        # Split custom labels by "|" - MSB to LSB
+                        labels = show_raw.split('|')
+                        # Truncate to max 16 labels (do NOT auto-pad)
+                        labels = labels[:16]
+                        show = labels
+
+                # Store the definition
+                self.input_defs[idx] = InputRegDef(
+                    title=title,
+                    fmt=fmt,
+                    ratio=ratio,
+                    show=show
+                )
+
+        except Exception:
+            # On any error, keep defaults
+            pass
+
+    def _update_input_titles(self):
+        """Update input register title labels from loaded definitions"""
+        if not hasattr(self, 'input_defs') or not hasattr(self, 'inputRegLabels'):
+            return
+
+        for i in range(min(8, len(self.input_defs), len(self.inputRegLabels))):
+            self.inputRegLabels[i].setText(self.input_defs[i].title)
+
     def _load_definitions_dialog(self):
         """Show file dialog to load address definitions"""
         start_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if getattr(sys, 'frozen', False) else os.getcwd()
@@ -2198,6 +2294,59 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rowValues[index].setText(text)
             self.rowValues[index].setStyleSheet(f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
 
+    def _render_input04(self, index: int, raw_value: int) -> str:
+        """Render 0x04 input register value according to its definition"""
+        if index < 0 or index >= 8 or not hasattr(self, 'input_defs'):
+            return str(raw_value)
+
+        input_def = self.input_defs[index]
+
+        if input_def.fmt == "value":
+            # Value format: apply ratio and int16/uint16 conversion
+            if input_def.show == "int16":
+                # Convert to signed int16
+                signed_val = raw_value if raw_value < 32768 else raw_value - 65536
+                result = signed_val * input_def.ratio
+            else:  # uint16 or default
+                # Use unsigned value
+                result = raw_value * input_def.ratio
+
+            # Format the number: suppress trailing ".0" if integer
+            if result == int(result):
+                return str(int(result))
+            else:
+                return f"{result:.2f}".rstrip('0').rstrip('.')
+
+        elif input_def.fmt == "bitstatus":
+            # Bitstatus format: show bits as 1/0 or custom labels
+            if input_def.show == "1/0":
+                # Show 16-bit binary representation
+                return f"{raw_value:016b}"
+            elif isinstance(input_def.show, list):
+                # Custom labels: MSB to LSB
+                labels = input_def.show
+                active_labels = []
+
+                # Iterate through bits from MSB (bit 15) to LSB (bit 0)
+                for bit_idx in range(16):
+                    bit_position = 15 - bit_idx  # MSB first
+                    bit_value = (raw_value >> bit_position) & 1
+
+                    if bit_value == 1:
+                        # Check if we have a label for this position
+                        if bit_idx < len(labels) and labels[bit_idx]:
+                            active_labels.append(labels[bit_idx])
+                        # If no label or empty label, skip (undefined bit)
+
+                # Return comma-separated labels, or "—" if none active
+                return ", ".join(active_labels) if active_labels else "—"
+            else:
+                # Fallback to 1/0 if show format is invalid
+                return f"{raw_value:016b}"
+
+        # Fallback: just show raw value
+        return str(raw_value)
+
     @QtCore.pyqtSlot(object, object)  # FIXED: Changed from (list, object) to (object, object) to allow None values
     def _on_input_registers_update(self, values: Optional[List[int]], error: Optional[str]):
         """Update input register displays from polling thread"""
@@ -2209,7 +2358,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # FIXED: Added isinstance(values, list) check to prevent TypeError
             if values is not None and isinstance(values, list) and len(values) == 8:
                 for i, val in enumerate(values):
-                    self.inputRegValues[i].setText(str(val))
+                    # Use custom rendering based on definition file
+                    rendered_text = self._render_input04(i, val)
+                    self.inputRegValues[i].setText(rendered_text)
                     self.inputRegValues[i].setStyleSheet(
                         f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
                         f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "

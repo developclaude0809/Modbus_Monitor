@@ -1,0 +1,8 @@
+Motor Temp,value,0.1,int16
+ADC Raw,value,1,uint16
+DI Status,bitstatus,,1/0
+Alarm Flags,bitstatus,,P|O|N|M|L||J|I|H|G|F|E|D|C|B|A
+Speed,value,0.01,uint16
+Pressure,value,0.1,int16
+Short Labels,bitstatus,,High|Med|Low
+IN7,value,1,int16
