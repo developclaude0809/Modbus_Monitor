@@ -302,7 +302,8 @@ class SerialManager(QtCore.QObject):
         """Calculate expected response length"""
         if func == 0x06:
             return 8
-        if func == 0x03:
+        # FIXED: Added 0x04 support - both 0x03 and 0x04 have identical response format
+        if func in (0x03, 0x04):  # Both 0x03 and 0x04 have identical response format
             if len(buf) >= 3:
                 return 5 + buf[2]
             return 0
@@ -377,7 +378,7 @@ class PollWorker(QtCore.QThread):
     """Background thread for auto-polling registers"""
 
     sigRegister = QtCore.pyqtSignal(int, object, object)  # index, value|None, error|None
-    sigInputRegisters = QtCore.pyqtSignal(list, object)  # values|None, error|None
+    sigInputRegisters = QtCore.pyqtSignal(object, object)  # FIXED: Changed from (list, object) to (object, object) - values (list|None), error (str|None)
     sigStatus = QtCore.pyqtSignal(str)
 
     def __init__(self, serial_mgr: SerialManager, get_row_addr_callable, get_cfg_callable, parent=None):
@@ -386,7 +387,7 @@ class PollWorker(QtCore.QThread):
         self.get_row_addr = get_row_addr_callable  # returns addr int or None for row
         self.get_cfg = get_cfg_callable            # returns (slave_id:int, timeout:float, interval:float)
         self._running = True
-        self._cycle_counter = 0
+        self._request_counter = 0  # FIXED: Count individual 0x03 requests, not cycles
 
     def stop(self):
         """Stop the polling thread"""
@@ -421,15 +422,15 @@ class PollWorker(QtCore.QThread):
                         err = result if isinstance(result, str) else "Read failed"
                         self.sigRegister.emit(i, None, err)
 
+                    # FIXED: Increment request counter after each successful 0x03 request
+                    self._request_counter += 1
+
                 except Exception as e:
                     self.sigRegister.emit(i, None, str(e))
 
-            # Increment cycle counter
-            self._cycle_counter += 1
-
-            # Every 20 cycles, read 8 input registers (0x04) - 20:1 ratio
-            if self._cycle_counter >= 20:
-                self._cycle_counter = 0
+            # FIXED: Every 20 requests (not cycles), read 8 input registers (0x04) - 20:1 ratio
+            if self._request_counter >= 20:
+                self._request_counter = 0
                 if self._running:
                     try:
                         req = ModbusRTU.read_input_registers(slave_id, 0x0000, 8)
@@ -439,6 +440,9 @@ class PollWorker(QtCore.QThread):
                         else:
                             err = result if isinstance(result, str) else "Read failed"
                             self.sigInputRegisters.emit(None, err)
+                            # FIXED: Emit explicit status message for timeouts
+                            if "timeout" in str(err).lower():
+                                self.sigStatus.emit("Input registers (0x04) timeout - will retry next cycle")
                     except Exception as e:
                         self.sigInputRegisters.emit(None, str(e))
 
@@ -1004,7 +1008,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rv = QtWidgets.QVBoxLayout(RWpanel)
         # Internal padding for right frame
         rv.setContentsMargins(12, 12, 12, 12)
-        rv.setSpacing(10)
+        rv.setSpacing(6)
 
         # Top row: Start button, ID, Timeout, Poll Interval in horizontal layout
         topRow = QtWidgets.QWidget()
@@ -1054,7 +1058,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Internal padding and spacing inside the register grid
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
+        grid.setVerticalSpacing(6)
         # Column stretch ratio: address_list : read_value : enter_value = 10 : 5 : 5
         grid.setColumnStretch(0, 10)
         grid.setColumnStretch(1, 5)
@@ -1267,11 +1271,20 @@ class MainWindow(QtWidgets.QMainWindow):
         # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save
         self._filter_toolbar_buttons()
 
-        # Seed the initial Home baseline for toolbar navigation
+        # FIXED: Override Home button to auto-fit current data instead of restoring empty view
         try:
-            self.plot_canvas.draw()
             if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
-                self.plot_toolbar.push_current()
+                # Find the Home action in the toolbar
+                for action in self.plot_toolbar.actions():
+                    if action.text() == 'Home':
+                        # Disconnect default behavior
+                        try:
+                            action.triggered.disconnect()
+                        except TypeError:
+                            pass  # No connections to disconnect
+                        # Connect our custom behavior
+                        action.triggered.connect(self._on_home_clicked)
+                        break
         except Exception:
             pass
 
@@ -1786,15 +1799,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.inaxes != self.plot_ax:
             return
 
-        # Double-click: reset to auto-scale
+        # FIXED: Double-click uses same method as Home button for consistency
         if event.dblclick:
-            self._toolbar_push_current()
-            self.manual_zoom_active = False
-            self.zoom_history.clear()
-            self.plot_ax.relim()
-            self.plot_ax.autoscale_view()
-            self.plot_canvas.draw_idle()
-            self._set_status("Zoom reset to auto-scale")
+            self._on_home_clicked()  # Use same method for consistency
             return
 
         # Right-click: zoom out one level
@@ -2191,27 +2198,36 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rowValues[index].setText(text)
             self.rowValues[index].setStyleSheet(f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
 
-    @QtCore.pyqtSlot(list, object)
+    @QtCore.pyqtSlot(object, object)  # FIXED: Changed from (list, object) to (object, object) to allow None values
     def _on_input_registers_update(self, values: Optional[List[int]], error: Optional[str]):
         """Update input register displays from polling thread"""
-        if values is not None and len(values) == 8:
-            for i, val in enumerate(values):
-                self.inputRegValues[i].setText(str(val))
-                self.inputRegValues[i].setStyleSheet(
-                    f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                    f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                    f"font-weight:600; font-size:14px;"
-                )
-        else:
-            # Error case
-            for i in range(8):
-                text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
-                self.inputRegValues[i].setText(text)
-                self.inputRegValues[i].setStyleSheet(
-                    f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; "
-                    f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
-                    f"font-weight:600; font-size:14px;"
-                )
+        # FIXED: Add widget existence check to prevent crash on deleted widgets
+        if not hasattr(self, 'inputRegValues') or len(self.inputRegValues) != 8:
+            return
+
+        try:  # FIXED: Wrap in try-except to catch widget deletion race
+            # FIXED: Added isinstance(values, list) check to prevent TypeError
+            if values is not None and isinstance(values, list) and len(values) == 8:
+                for i, val in enumerate(values):
+                    self.inputRegValues[i].setText(str(val))
+                    self.inputRegValues[i].setStyleSheet(
+                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                        f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                        f"font-weight:600; font-size:14px;"
+                    )
+            else:
+                # Error case
+                for i in range(8):
+                    text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
+                    self.inputRegValues[i].setText(text)
+                    self.inputRegValues[i].setStyleSheet(
+                        f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; "
+                        f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
+                        f"font-weight:600; font-size:14px;"
+                    )
+        except (RuntimeError, AttributeError):
+            # FIXED: Widget was deleted during update, exit gracefully
+            return
 
     # ---------- Write ----------
     def _write_register(self, index: int):
@@ -2366,6 +2382,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_canvas.draw()
         except Exception as e:
             pass  # Silently ignore plot update errors
+
+    # FIXED: Override Home button to auto-fit current data instead of restoring original view
+    def _on_home_clicked(self):
+        """Override Home button to auto-fit current data instead of restoring original view"""
+        try:
+            # Clear manual zoom state
+            self.manual_zoom_active = False
+            self.zoom_history.clear()
+
+            # Auto-fit to current data
+            self.plot_ax.relim()
+            self.plot_ax.autoscale_view()
+
+            # Update toolbar's view stack so Back/Forward still work
+            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                self.plot_toolbar.push_current()
+
+            self.plot_canvas.draw_idle()
+            self._set_status("View reset to auto-fit current data")
+        except Exception as e:
+            self._set_status(f"Home reset failed: {e}")
 
     # ---------- Close ----------
     def closeEvent(self, e: QtGui.QCloseEvent):
