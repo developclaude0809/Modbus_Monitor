@@ -1302,7 +1302,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotCombos.append(combo)
 
             # Add probe value label below each channel's combobox
-            probe_val = QtWidgets.QLabel("??")
+            probe_val = QtWidgets.QLabel("---")
             probe_val.setAlignment(QtCore.Qt.AlignCenter)
             probe_val.setFixedHeight(30)
             probe_val.setStyleSheet(
@@ -1651,7 +1651,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Update probe label state when toggling channel visibility
         if checked:
-            self._set_probe_label(idx, "??", active=True)
+            self._set_probe_label(idx, "-", active=True)
         else:
             self._set_probe_label(idx, "OFF", active=False)
 
