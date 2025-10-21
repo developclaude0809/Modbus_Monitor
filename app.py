@@ -1,4 +1,4 @@
-"""
+﻿"""
 Enhanced Modbus RTU Controller with PyQt5
 - 9-color themed UI (Midnight Navy, Deep/ Sky Blue, Soft Yellow, Cream Tint, Cool Gray, Mist Blue, Rose Coral, Mint Glow)
 - Proper threading with QThread and signals
@@ -51,7 +51,7 @@ except ImportError:
 
 class Colors:
     # ------------------------------------------------------------
-    # 🎨 MASTER COLOR PALETTE (Sorted by RGB hex values)
+    # ?嚙踝蕭 MASTER COLOR PALETTE (Sorted by RGB hex values)
     # ------------------------------------------------------------
     BTN_DANGER_BG     = "#A32424"
     BTN_SUCCESS_HOVER = "#10B97B"
@@ -70,7 +70,7 @@ class Colors:
     BTN_TEXT_COLOR    = "#FFFFFF"
 
     # ------------------------------------------------------------
-    # 🌑 SEMANTIC COLORS — Contextual mapping for dark UI
+    # ?? SEMANTIC COLORS ??Contextual mapping for dark UI
     # ------------------------------------------------------------
 
     # Backgrounds
@@ -474,7 +474,7 @@ class PollWorker(QtCore.QThread):
 class PlotWorker(QtCore.QThread):
     """Background thread for plotting with phase-locked 40ms requests.
 
-    Reads 4 channels whose addresses are selected via the CH1–CH4
+    Reads 4 channels whose addresses are selected via the CH1?嚙瘠H4
     comboboxes in the UI. Requests occur on a fixed interval grid
     (default 40 ms per slot), cycling through enabled channels only.
     """
@@ -485,7 +485,7 @@ class PlotWorker(QtCore.QThread):
     def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_active_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
         super().__init__(parent)
         self.serial_mgr = serial_mgr
-        # Callable returning a list of 4 addresses (or None) for CH1–CH4
+        # Callable returning a list of 4 addresses (or None) for CH1?嚙瘠H4
         self.get_addresses = get_addresses_callable
         # Callable returning list of enabled channel indices (e.g., [0, 1, 2, 3] or [0, 1, 3])
         self.get_active = get_active_callable
@@ -1123,13 +1123,13 @@ class MainWindow(QtWidgets.QMainWindow):
         inputRegFrame.setFixedHeight(230)
         inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
 
-        # Create grid layout with 4 rows × 2 columns
+        # Create grid layout with 4 rows ? 2 columns
         inputGrid = QtWidgets.QGridLayout(inputRegFrame)
         inputGrid.setContentsMargins(12, 12, 12, 12)
         inputGrid.setHorizontalSpacing(8)
         inputGrid.setVerticalSpacing(16)
 
-        # Add 8 input registers (4 rows × 2 columns)
+        # Add 8 input registers (4 rows ? 2 columns)
         self.inputRegLabels: List[QtWidgets.QLabel] = []  # Store title labels
         self.inputRegValues: List[QtWidgets.QLabel] = []
         for i in range(8):
@@ -1171,12 +1171,97 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStatusBar(self.status)
         self._set_status("Ready")
 
+        # region === RD Panel (Special Command Buttons) ===
+        RDpanel = QtWidgets.QFrame()
+        RDpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        RDpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        RDpanel.setFixedHeight(80)
+        RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        rd_layout = QtWidgets.QHBoxLayout(RDpanel)
+        rd_layout.setContentsMargins(12, 12, 12, 12)
+        rd_layout.setSpacing(8)
+
+        # Normal button
+        self.btnNormal = QtWidgets.QPushButton("Normal")
+        self.btnNormal.setFixedWidth(120)
+        self.btnNormal.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
+        rd_layout.addWidget(self.btnNormal)
+
+        # Bypass button
+        self.btnBypass = QtWidgets.QPushButton("Bypass")
+        self.btnBypass.setFixedWidth(120)
+        self.btnBypass.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
+        rd_layout.addWidget(self.btnBypass)
+
+        # List combobox
+        self.rdCombo = SearchableCombo(half_width=False)
+        self.rdCombo.addItems(["Inverter", "Converter", "Gsensor"])
+        self.rdCombo.setFixedWidth(140)
+        rd_layout.addWidget(self.rdCombo)
+
+        # Switch button
+        self.btnSwitch = QtWidgets.QPushButton("Switch")
+        self.btnSwitch.setFixedWidth(120)
+        self.btnSwitch.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnSwitch.clicked.connect(self._send_switch_command)
+        rd_layout.addWidget(self.btnSwitch)
+
+        rd_layout.addStretch()  # Push controls to the left
+        # endregion
+
+        # region === Reset Panel (Special Reset Buttons) ===
+        ResetPanel = QtWidgets.QFrame()
+        ResetPanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        ResetPanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        ResetPanel.setFixedSize(150, 80)
+        ResetPanel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+
+        reset_layout = QtWidgets.QVBoxLayout(ResetPanel)
+        reset_layout.setContentsMargins(8, 8, 8, 8)
+        reset_layout.setSpacing(8)
+
+        # Reset button
+        self.btnReset = QtWidgets.QPushButton("Reset")
+        self.btnReset.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:6px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnReset.clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
+        reset_layout.addWidget(self.btnReset)
+
+        # Reset Def button
+        self.btnResetDef = QtWidgets.QPushButton("Reset Def")
+        self.btnResetDef.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SECONDARY_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:6px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_SECONDARY_HOVER};}}"
+        )
+        self.btnResetDef.clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
+        reset_layout.addWidget(self.btnResetDef)
+        # endregion
+
         # Plot panel
         plot_panel = QtWidgets.QFrame()
         plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Height matches left column total: Motor(150) + gap(8) + RWpanel(800) = 958
-        plot_panel.setFixedSize(910, 890)
+        # Height adjusted: Right column = RD Panel(80) + gap(8) + Plot(800) = 888px to match left column (Motor 80 + gap 8 + RWpanel 800)
+        plot_panel.setFixedSize(910, 800)
         plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         pv = QtWidgets.QVBoxLayout(plot_panel)
         pv.setContentsMargins(2, 2, 2, 2)
@@ -1217,7 +1302,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotCombos.append(combo)
 
             # Add probe value label below each channel's combobox
-            probe_val = QtWidgets.QLabel("—")
+            probe_val = QtWidgets.QLabel("??")
             probe_val.setAlignment(QtCore.Qt.AlignCenter)
             probe_val.setFixedHeight(30)
             probe_val.setStyleSheet(
@@ -1333,11 +1418,23 @@ class MainWindow(QtWidgets.QMainWindow):
         left_column.addWidget(motor_panel)  # Motor Control Panel on top
         left_column.addWidget(RWpanel)  # Read Addresses Panel on bottom
 
-        # Create bottom layout with left column and plot panel
+        # Create top row for RD and Reset panels (above plot panel)
+        top_control_row = QtWidgets.QHBoxLayout()
+        top_control_row.setSpacing(8)
+        top_control_row.addWidget(RDpanel)      # RD Panel (left)
+        top_control_row.addWidget(ResetPanel)   # Reset Panel (right)
+
+        # Create right column with top control row and plot panel
+        right_column = QtWidgets.QVBoxLayout()
+        right_column.setSpacing(8)
+        right_column.addLayout(top_control_row)  # Top control row (RD + Reset)
+        right_column.addWidget(plot_panel)       # Plot panel below
+
+        # Create bottom layout with left column and right column
         bottom_layout = QtWidgets.QHBoxLayout()
         bottom_layout.setSpacing(8)
         bottom_layout.addLayout(left_column)  # Left column (motor + read addresses)
-        bottom_layout.addWidget(plot_panel)  # Plot panel on right
+        bottom_layout.addLayout(right_column)  # Right column (controls + plot)
 
         main_layout.addLayout(bottom_layout)
 
@@ -1396,7 +1493,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_probe_labels(self):
         """Reset all probe labels."""
         for i in range(4):
-            self._set_probe_label(i, "—", active=True)
+            self._set_probe_label(i, "??", active=True)
 
     def _toggle_probe_mode(self, on: bool):
         """Toggle probe mode on/off"""
@@ -1461,7 +1558,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Sample each active channel
         channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
-        status_parts = [f"Probe @ {x_probe:.3f}s →"]
+        status_parts = [f"Probe @ {x_probe:.3f}s"]
 
         for i in range(4):
             # Check if channel is active (enabled for plotting)
@@ -1554,7 +1651,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Update probe label state when toggling channel visibility
         if checked:
-            self._set_probe_label(idx, "—", active=True)
+            self._set_probe_label(idx, "??", active=True)
         else:
             self._set_probe_label(idx, "OFF", active=False)
 
@@ -2227,6 +2324,82 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Motor Control Error", str(e))
             self._set_status(f"Motor control failed: {e}")
 
+    def _send_rd_command(self, cmd_hex: str, btn_text: str):
+        """Send RD special command (raw hex with auto CRC)"""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+        try:
+            # Convert hex string to bytes
+            cmd_bytes = bytes.fromhex(cmd_hex)
+            # Calculate and append CRC16
+            crc = ModbusRTU.crc16(cmd_bytes)
+            frame = cmd_bytes + struct.pack("<H", crc)
+
+            # Send directly via serial port (no response check)
+            self.serial_mgr.port.write(frame)
+            self.serial_mgr.port.flush()
+
+            self._set_status(f"{btn_text} command sent")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "RD Command Error", str(e))
+            self._set_status(f"RD command failed: {e}")
+
+    def _send_reset_command(self, cmd_hex: str, btn_text: str):
+        """Send Reset special command (raw hex with auto CRC)"""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+        try:
+            # Convert hex string to bytes
+            cmd_bytes = bytes.fromhex(cmd_hex)
+            # Calculate and append CRC16
+            crc = ModbusRTU.crc16(cmd_bytes)
+            frame = cmd_bytes + struct.pack("<H", crc)
+
+            # Send directly via serial port (no response check)
+            self.serial_mgr.port.write(frame)
+            self.serial_mgr.port.flush()
+
+            self._set_status(f"{btn_text} command sent")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Reset Command Error", str(e))
+            self._set_status(f"Reset command failed: {e}")
+
+    def _send_switch_command(self):
+        """Send Switch command based on current combobox selection"""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+        try:
+            # Command mapping based on selection
+            cmd_map = {
+                "Inverter": "014600070001024708",
+                "Converter": "014600070001023908",
+                "Gsensor": "014600070001025A08"
+            }
+
+            selected = self.rdCombo.currentText()
+            cmd_hex = cmd_map.get(selected)
+
+            if not cmd_hex:
+                raise ValueError(f"Unknown selection: {selected}")
+
+            # Convert hex string to bytes
+            cmd_bytes = bytes.fromhex(cmd_hex)
+            # Calculate and append CRC16
+            crc = ModbusRTU.crc16(cmd_bytes)
+            frame = cmd_bytes + struct.pack("<H", crc)
+
+            # Send directly via serial port (no response check)
+            self.serial_mgr.port.write(frame)
+            self.serial_mgr.port.flush()
+
+            self._set_status(f"Switch command sent: {selected}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Switch Command Error", str(e))
+            self._set_status(f"Switch command failed: {e}")
+
     def _start_polling(self):
         """Start auto-polling"""
         if not self.serial_mgr.connected:
@@ -2338,8 +2511,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             active_labels.append(labels[bit_idx])
                         # If no label or empty label, skip (undefined bit)
 
-                # Return comma-separated labels, or "—" if none active
-                return ", ".join(active_labels) if active_labels else "—"
+                # Return comma-separated labels, or "?? if none active
+                return ", ".join(active_labels) if active_labels else "??"
             else:
                 # Fallback to 1/0 if show format is invalid
                 return f"{raw_value:016b}"
@@ -2703,3 +2876,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
