@@ -2161,7 +2161,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 fmt = parts[1].lower() if len(parts) > 1 and parts[1] else "value"
 
                 # Validate format
-                if fmt not in ("value", "bitstatus"):
+                if fmt not in ("value", "bitstatus", "valstatus"):
                     fmt = "value"
 
                 # Parse ratio
@@ -2188,6 +2188,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         # Truncate to max 16 labels (do NOT auto-pad)
                         labels = labels[:16]
                         show = labels
+                elif fmt == "valstatus":
+                    # Use raw value as 0-based index into labels; out-of-range => "NA"
+                    # Limit to at most 16 labels
+                    labels = [s.strip() for s in show_raw.split('|')] if show_raw else []
+                    labels = labels[:16]
+                    show = labels
 
                 # Store the definition
                 self.input_defs[idx] = InputRegDef(
@@ -2535,6 +2541,17 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 # Fallback to 1/0 if show format is invalid
                 return f"{raw_value:016b}"
+
+        elif input_def.fmt == "valstatus":
+            # Map raw_value -> label by 0-based index; out of range => "NA"
+            labels = input_def.show if isinstance(input_def.show, list) else []
+            try:
+                idx = int(raw_value)
+            except Exception:
+                idx = -1
+            if 0 <= idx < len(labels) and labels[idx]:
+                return labels[idx]
+            return "NA"
 
         # Fallback: just show raw value
         return str(raw_value)
