@@ -2066,7 +2066,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update UI for connection state"""
         if connected:
             self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
         else:
             self.btnConnect.setText("Connect")
             self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
@@ -2379,27 +2379,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Reset command failed: {e}")
 
     def _send_switch_command(self):
-        """Send Switch command based on current combobox selection"""
+        """Send Switch command based on current combobox selection, then update ID field."""
         if not self.serial_mgr.connected:
             QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
             return
         try:
-            # Command mapping based on selection
-            cmd_map = {
-                "Inverter": "014600070001024708",
-                "Converter": "014600070001023908",
-                "Gsensor": "014600070001025A08"
+            # selection -> (cmd_hex, new_slave_id)
+            mapping = {
+                "Inverter":  ("014600070001024708", 1),
+                "Converter": ("014600070001023908", 2),
+                "Gsensor":   ("014600070001025A08", 3),
             }
 
             selected = self.rdCombo.currentText()
-            cmd_hex = cmd_map.get(selected)
-
-            if not cmd_hex:
+            pair = mapping.get(selected)
+            if not pair:
                 raise ValueError(f"Unknown selection: {selected}")
 
-            # Convert hex string to bytes
+            cmd_hex, new_id = pair
+
+            # Convert hex string to bytes + append CRC16
             cmd_bytes = bytes.fromhex(cmd_hex)
-            # Calculate and append CRC16
             crc = ModbusRTU.crc16(cmd_bytes)
             frame = cmd_bytes + struct.pack("<H", crc)
 
@@ -2407,7 +2407,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.serial_mgr.port.write(frame)
             self.serial_mgr.port.flush()
 
-            self._set_status(f"Switch command sent: {selected}")
+            # Update the ID field to the corresponding number
+            self.edSlave.setText(str(new_id))
+
+            self._set_status(f"Switch command sent: {selected} → ID set to {new_id}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Switch Command Error", str(e))
             self._set_status(f"Switch command failed: {e}")
@@ -2444,7 +2447,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.start()
 
             self.btnPolling.setText("Stop")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
             self._set_status("Polling started")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
@@ -2503,6 +2506,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return f"{result:.2f}".rstrip('0').rstrip('.')
 
         elif input_def.fmt == "bitstatus":
+            # NEW: If all bits are zero, show "Normal"
+            if raw_value == 0:
+                return "Normal"
+
             # Bitstatus format: show bits as 1/0 or custom labels
             if input_def.show == "1/0":
                 # Show 16-bit binary representation
@@ -2523,8 +2530,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             active_labels.append(labels[bit_idx])
                         # If no label or empty label, skip (undefined bit)
 
-                # Return comma-separated labels, or "-" if none active
-                return ", ".join(active_labels) if active_labels else "-"
+                # Return comma-separated labels, or "Normal" if none active
+                return ", ".join(active_labels) if active_labels else "Normal"
             else:
                 # Fallback to 1/0 if show format is invalid
                 return f"{raw_value:016b}"
@@ -2664,7 +2671,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_worker.start()
 
             self.btnDraw.setText("Stop")
-            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
             self._set_status("Plotting started")
 
         except Exception as e:
@@ -2721,17 +2728,33 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # FIXED: Override Home button to auto-fit current data instead of restoring original view
     def _on_home_clicked(self):
-        """Override Home button to auto-fit current data instead of restoring original view"""
+        """Reset view to auto-fit current data safely, even if no data is present."""
         try:
-            # Clear manual zoom state
             self.manual_zoom_active = False
             self.zoom_history.clear()
 
-            # Auto-fit to current data
-            self.plot_ax.relim()
-            self.plot_ax.autoscale_view()
+            # Re-enable autoscale (manually disabled after set_xlim/set_ylim)
+            self.plot_ax.set_autoscalex_on(True)
+            self.plot_ax.set_autoscaley_on(True)
 
-            # Update toolbar's view stack so Back/Forward still work
+            # Recalculate limits based on visible lines
+            self.plot_ax.relim(visible_only=True)
+
+            # Check if any channel has valid data
+            has_data = any(
+                len(self.plot_data[i]["time"]) > 0 and len(self.plot_data[i]["value"]) > 0
+                for i in range(4)
+            )
+
+            if has_data:
+                # Normal case: auto-fit to data
+                self.plot_ax.autoscale_view()
+            else:
+                # Empty plot: set safe default window
+                self.plot_ax.set_xlim(0, 10)
+                self.plot_ax.set_ylim(-10, 10)
+
+            # Update toolbar state and redraw
             if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
                 self.plot_toolbar.push_current()
 
