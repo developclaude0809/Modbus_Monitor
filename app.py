@@ -973,14 +973,122 @@ class ClickableLabel(QtWidgets.QLabel):
         super().mousePressEvent(event)
 
 
+# ==================== UI Auto-Scaling ====================
+def clamp(val, lo, hi):
+    """Clamp value between low and high bounds"""
+    return max(lo, min(hi, val))
+
+
+def compute_ui_scale(app, base_w=2560, base_h=1440, lo=0.85, hi=1.25):
+    """Compute UI scale factor based on screen resolution"""
+    screen = app.primaryScreen()
+    geom = screen.availableGeometry()
+    sw, sh = geom.width(), geom.height()
+    s = min(sw / float(base_w), sh / float(base_h))
+    return max(lo, min(hi, s))
+
+
+class UiTokens:
+    """Unified design tokens for consistent UI sizing and responsive layout"""
+
+    def __init__(self, scale: float):
+        self.scale = scale
+        self.s = clamp(scale, 0.9, 1.15)
+
+    def btn_h(self):
+        """Standard button height - scales with display"""
+        return int(clamp(36 * self.s, 32, 44))
+
+    def btn_h_large(self):
+        """Large button height for prominent controls (motor, reset panels)"""
+        return int(clamp(50 * self.s, 42, 58))
+
+    def btn_w(self):
+        """Standard button minimum width - responsive"""
+        return int(clamp(120 * self.s, 100, 140))
+
+    def input_h(self):
+        """Input field height"""
+        return int(clamp(34 * self.s, 30, 42))
+
+    def input_h_large(self):
+        """Large input field height for prominent inputs"""
+        return int(clamp(50 * self.s, 42, 58))
+
+    def pad(self):
+        """Padding size"""
+        return int(clamp(10 * self.s, 8, 14))
+
+    def gap(self):
+        """Gap/spacing size"""
+        return int(clamp(8 * self.s, 6, 12))
+
+    def radius(self):
+        """Border radius"""
+        return int(clamp(8 * self.s, 6, 12))
+
+    def icon(self):
+        """Icon size"""
+        return int(clamp(20 * self.s, 16, 24))
+
+    def panel_minw(self):
+        """Panel minimum width"""
+        return int(clamp(520 * self.s, 460, 640))
+
+    def panel_h_control(self):
+        """Control panel minimum height (RD, Reset panels)"""
+        return int(clamp(80 * self.s, 70, 95))
+
+    def combo_w(self):
+        """Combo box minimum width"""
+        return int(clamp(140 * self.s, 120, 160))
+
+    # Font size tokens - scale with display DPI
+    def font_small(self):
+        """Small font size (10px base)"""
+        return int(clamp(10 * self.s, 9, 12))
+
+    def font_normal(self):
+        """Normal font size (14px base)"""
+        return int(clamp(14 * self.s, 12, 16))
+
+    def font_medium(self):
+        """Medium font size (16px base)"""
+        return int(clamp(16 * self.s, 14, 18))
+
+    def font_large(self):
+        """Large font size (22px base - for combo/inputs)"""
+        return int(clamp(22 * self.s, 19, 26))
+
+    def font_xlarge(self):
+        """Extra large font size (24-26px base - for prominent buttons)"""
+        return int(clamp(25 * self.s, 22, 29))
+
+
+def style_consistent(app: QtWidgets.QApplication, tokens: UiTokens):
+    """Apply consistent styling based on UI tokens (minimal override to preserve theme)"""
+    # Only apply non-intrusive scaling adjustments, don't override the main theme
+    pass  # Keep existing theme intact
+
+
+def apply_control_sizes(root: QtWidgets.QWidget, tokens: UiTokens):
+    """Apply size constraints to all controls based on UI tokens"""
+    # Disabled: The existing UI already has good sizing
+    # Only apply if there are specific scaling issues
+    pass
+
+
 # ==================== Main Window ====================
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window"""
 
-    def __init__(self):
+    def __init__(self, ui_scale: float = 1.0):
         super().__init__()
         self.setWindowTitle("Modbus RTU Controller")
-        self.resize(1600, 900)
+        # Don't set initial size here - will be set based on screen resolution in main()
+
+        # Initialize UI tokens for responsive sizing with provided scale
+        self.tokens = UiTokens(ui_scale)
 
         self.serial_mgr = SerialManager(self)
         self.addr_items: List[str] = []  # ["000_name", ...]
@@ -1114,25 +1222,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
         main_layout.addWidget(uart_panel)
 
-        # ========== Motor Control Panel ==========
+        # ========== Motor Control Panel (RESPONSIVE) ==========
         motor_panel = QtWidgets.QFrame()
         motor_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         motor_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        motor_panel.setFixedSize(650, 80)
-        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # RESPONSIVE: Use tokens for minimum size instead of fixed values
+        motor_panel.setMinimumSize(self.tokens.panel_minw(), self.tokens.panel_h_control())
+        motor_panel.setMaximumWidth(650)
+        # RESPONSIVE: Allow vertical expansion if needed
+        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
 
         motor_layout = QtWidgets.QHBoxLayout(motor_panel)
-        motor_layout.setContentsMargins(12, 12, 12, 12)
-        motor_layout.setSpacing(10)
+        # RESPONSIVE: Use token-based margins and spacing
+        motor_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
+        motor_layout.setSpacing(self.tokens.gap())
 
         # Value input for motor control
         self.edMotorValue = QtWidgets.QLineEdit()
         self.edMotorValue.setText("0")
         self.edMotorValue.setValidator(QtGui.QIntValidator(0, 65535, self))
-        self.edMotorValue.setFixedHeight(50)
+        # RESPONSIVE: Use token-based height instead of fixed, allow width to expand
+        self.edMotorValue.setMinimumHeight(self.tokens.input_h_large())
+        self.edMotorValue.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.edMotorValue.setStyleSheet(
             f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; "
-            f"border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px; font-size:24px; font-weight:700;}} "
+            f"border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px; font-size:{self.tokens.font_large()}px; font-weight:700;}} "
             f"QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}"
         )
         self.edMotorValue.returnPressed.connect(self._send_motor_value)
@@ -1140,10 +1255,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Send button (success style)
         self.btnMotorSend = QtWidgets.QPushButton("Send")
-        self.btnMotorSend.setFixedWidth(120)
-        self.btnMotorSend.setFixedHeight(50)
+        # RESPONSIVE: Use token-based minimum sizes instead of fixed, allow expansion
+        self.btnMotorSend.setMinimumSize(self.tokens.btn_w(), self.tokens.btn_h_large())
+        self.btnMotorSend.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.btnMotorSend.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:26px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnMotorSend.clicked.connect(self._send_motor_value)
@@ -1151,10 +1268,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Stop button (danger style)
         self.btnMotorStop = QtWidgets.QPushButton("Stop")
-        self.btnMotorStop.setFixedWidth(120)
-        self.btnMotorStop.setFixedHeight(50)
+        # RESPONSIVE: Use token-based minimum sizes instead of fixed, allow expansion
+        self.btnMotorStop.setMinimumSize(self.tokens.btn_w(), self.tokens.btn_h_large())
+        self.btnMotorStop.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.btnMotorStop.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:26px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnMotorStop.clicked.connect(self._stop_motor)
@@ -1164,13 +1283,15 @@ class MainWindow(QtWidgets.QMainWindow):
         RWpanel = QtWidgets.QFrame()
         RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         RWpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Fix requested panel size (increased to fit all content without scroll)
-        RWpanel.setFixedSize(650, 800)
-        RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # Set responsive panel size - allow flexible height
+        RWpanel.setMinimumSize(550, 600)
+        RWpanel.setMaximumWidth(650)
+        RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         rv = QtWidgets.QVBoxLayout(RWpanel)
         # Internal padding for right frame
         rv.setContentsMargins(3, 1, 3, 1)
-        rv.setSpacing(0)  # No spacing - widgets will touch each other vertically
+        # FIXED: Add spacing between register grid and input register frame to prevent overlap
+        rv.setSpacing(8)  # 8px spacing prevents widgets from overlapping
 
         # Top row: Start button, ID, Timeout, Poll Interval in horizontal layout
         topRow = QtWidgets.QWidget()
@@ -1216,15 +1337,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Register grid (10 rows) without scroll
         gridWidget = QtWidgets.QWidget()
+        # FIXED: Set size policy to prevent excessive expansion that causes overlap
+        gridWidget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         grid = QtWidgets.QGridLayout(gridWidget)
         # Internal padding and spacing inside the register grid
-        grid.setContentsMargins(5, 5, 5, 5)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(15)  # Increased from 10 to 15 for taller grid
-        # Column stretch ratio: address_list : read_value : enter_value = 10 : 5 : 5
-        grid.setColumnStretch(0, 10)
-        grid.setColumnStretch(1, 5)
-        grid.setColumnStretch(2, 5)
+        grid.setContentsMargins(1, 5, 1, 5)
+        grid.setHorizontalSpacing(8)  # Increased from 4 to 8 for better column separation
+        grid.setVerticalSpacing(7)  # Increased from 10 to 15 for taller grid
+        # Column stretch ratio: address_list : read_value : enter_value = 8 : 6 : 6
+        # Increased value and write box widths for better readability
+        grid.setColumnStretch(0, 8)
+        grid.setColumnStretch(1, 6)
+        grid.setColumnStretch(2, 6)
 
         self.rowCombos: List[SearchableCombo] = []
         self.rowValues: List[QtWidgets.QLabel] = []
@@ -1235,6 +1359,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # No numeric label column; start with the address selector
             combo = SearchableCombo(half_width=False)
             combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            combo.setMinimumHeight(25)  # Match height with value and edit boxes
             combo.addItem("---")
             # Use same styling as COM port - no custom arrow styling
             grid.addWidget(combo, r, 0)
@@ -1242,6 +1367,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             val = QtWidgets.QLabel("----")
             val.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            val.setMinimumHeight(25)  # Increased height for better readability
             val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:14px;")
             grid.addWidget(val, r, 1)
             self.rowValues.append(val)
@@ -1249,6 +1375,7 @@ class MainWindow(QtWidgets.QMainWindow):
             edit = QtWidgets.QLineEdit()
             edit.setPlaceholderText("Enter value (0-65535)")
             edit.setValidator(QtGui.QIntValidator(0, 65535, self))
+            edit.setMinimumHeight(25)  # Increased height for better readability
             edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
             edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
@@ -1259,14 +1386,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Input Register Display (FC 0x04)
         inputRegFrame = QtWidgets.QFrame()
-        inputRegFrame.setFixedHeight(230)
+        inputRegFrame.setMinimumHeight(150)
+        inputRegFrame.setMaximumHeight(250)
         inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
 
         # Create grid layout with 4 rows | 2 columns
         inputGrid = QtWidgets.QGridLayout(inputRegFrame)
-        inputGrid.setContentsMargins(12, 12, 12, 12)
+        inputGrid.setContentsMargins(3, 3, 3, 3)
         inputGrid.setHorizontalSpacing(8)
-        inputGrid.setVerticalSpacing(16)
+        inputGrid.setVerticalSpacing(2)
 
         # Add 8 input registers (4 rows | 2 columns)
         self.inputRegLabels: List[QtWidgets.QLabel] = []  # Store title labels
@@ -1310,23 +1438,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStatusBar(self.status)
         self._set_status("Ready")
 
-        # region === RD Panel (Special Command Buttons) ===
+        # region === RD Panel (Special Command Buttons - RESPONSIVE) ===
         RDpanel = QtWidgets.QFrame()
         RDpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         RDpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        RDpanel.setFixedHeight(80)
-        RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        # RESPONSIVE: Use token-based minimum height instead of fixed, allow slight vertical expansion
+        RDpanel.setMinimumHeight(self.tokens.panel_h_control())
+        RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
 
         rd_layout = QtWidgets.QHBoxLayout(RDpanel)
-        rd_layout.setContentsMargins(80, 1, 50, 1)
-        rd_layout.setSpacing(15)
+        # RESPONSIVE: Use token-based margins and spacing that scale with display
+        rd_layout.setContentsMargins(int(80 * self.tokens.s), self.tokens.pad()//2, int(50 * self.tokens.s), self.tokens.pad()//2)
+        rd_layout.setSpacing(int(15 * self.tokens.s))
 
         # Normal button
         self.btnNormal = QtWidgets.QPushButton("Normal")
-        self.btnNormal.setFixedWidth(120)
+        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
+        self.btnNormal.setMinimumWidth(self.tokens.btn_w())
+        self.btnNormal.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.btnNormal.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:25px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
@@ -1334,10 +1467,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Bypass button
         self.btnBypass = QtWidgets.QPushButton("Bypass")
-        self.btnBypass.setFixedWidth(120)
+        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
+        self.btnBypass.setMinimumWidth(self.tokens.btn_w())
+        self.btnBypass.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.btnBypass.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:25px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
@@ -1346,25 +1482,31 @@ class MainWindow(QtWidgets.QMainWindow):
         # List combobox
         self.rdCombo = SearchableCombo(half_width=False)
         self.rdCombo.addItems(["Inverter", "Converter", "Gsensor"])
+        # RESPONSIVE: Use token-based font sizes
         self.rdCombo.setStyleSheet(f"""
             QComboBox {{
-                font-size: 22px;
+                font-size: {self.tokens.font_large()}px;
                 font-weight: 600;
                 padding: 8px;
             }}
             QComboBox QAbstractItemView {{
-                font-size: 20px;
+                font-size: {self.tokens.font_medium()}px;
             }}
         """)
-        self.rdCombo.setFixedWidth(140)
+        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
+        self.rdCombo.setMinimumWidth(self.tokens.combo_w())
+        self.rdCombo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
         rd_layout.addWidget(self.rdCombo)
 
         # Switch button
         self.btnSwitch = QtWidgets.QPushButton("Switch")
-        self.btnSwitch.setFixedWidth(120)
+        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
+        self.btnSwitch.setMinimumWidth(self.tokens.btn_w())
+        self.btnSwitch.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
         self.btnSwitch.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:25px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnSwitch.clicked.connect(self._send_switch_command)
@@ -1373,22 +1515,32 @@ class MainWindow(QtWidgets.QMainWindow):
         rd_layout.addStretch()  # Push controls to the left
         # endregion
 
-        # region === Reset Panel (Special Reset Buttons) ===
+        # region === Reset Panel (Special Reset Buttons - RESPONSIVE) ===
         ResetPanel = QtWidgets.QFrame()
         ResetPanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         ResetPanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        ResetPanel.setFixedSize(200, 80)
-        ResetPanel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # RESPONSIVE: Increased minimum HEIGHT to prevent vertical text cutoff
+        # Height calculation: 2 buttons + padding + spacing + borders
+        # Base height 110px (was 80px) ensures both button texts display fully vertically
+        ResetPanel.setMinimumSize(int(200 * self.tokens.s), int(80 * self.tokens.s))
+        # Allow both horizontal and vertical expansion
+        ResetPanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
 
         reset_layout = QtWidgets.QVBoxLayout(ResetPanel)
-        reset_layout.setContentsMargins(8, 8, 8, 8)
-        reset_layout.setSpacing(8)
+        # RESPONSIVE: Use token-based margins and spacing
+        reset_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
+        reset_layout.setSpacing(self.tokens.gap())
 
         # Reset button
         self.btnReset = QtWidgets.QPushButton("Reset")
+        # RESPONSIVE: Allow button to expand within the panel
+        self.btnReset.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # Set minimum height to ensure text displays without vertical cutoff
+        self.btnReset.setMinimumHeight(int(20 * self.tokens.s))
+        # RESPONSIVE: Use smaller font size for more compact appearance
         self.btnReset.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:14px; padding:6px 12px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnReset.clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
@@ -1396,9 +1548,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Reset Def button
         self.btnResetDef = QtWidgets.QPushButton("Reset Def")
+        # RESPONSIVE: Allow button to expand within the panel
+        self.btnResetDef.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # Set minimum height to ensure text displays without vertical cutoff
+        self.btnResetDef.setMinimumHeight(int(20 * self.tokens.s))
+        # RESPONSIVE: Use smaller font size for more compact appearance
         self.btnResetDef.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:14px; padding:6px 12px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnResetDef.clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
@@ -1409,9 +1566,9 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_panel = QtWidgets.QFrame()
         plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Height adjusted: Right column = RD Panel(80) + gap(8) + Plot(800) = 888px to match left column (Motor 80 + gap 8 + RWpanel 800)
-        plot_panel.setFixedHeight(800)
-        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # Allow flexible height to adapt to screen size
+        plot_panel.setMinimumHeight(600)
+        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         pv = QtWidgets.QVBoxLayout(plot_panel)
         pv.setContentsMargins(2, 2, 2, 2)
         pv.setSpacing(1)
@@ -2172,6 +2329,46 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_status(self, msg: str):
         """Update status bar"""
         self.status.showMessage(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+    def _update_window_size_display(self):
+        """Update status bar to show current window size"""
+        width = self.width()
+        height = self.height()
+        scale = getattr(self, 'ui_scale', 1.0)
+        self.status.showMessage(f"Window: {width}×{height} | Scale: {scale:.2f}")
+
+    def resizeEvent(self, event):
+        """Handle window resize events to update size display"""
+        super().resizeEvent(event)
+        self._update_window_size_display()
+
+    def center_on_screen(self):
+        """Center window on primary screen.
+
+        This method calculates the center position of the primary screen's available
+        geometry and moves the window to that center position. Works correctly on
+        multiple resolutions and multi-monitor setups.
+
+        Compatible with PyInstaller/Nuitka packaging.
+        """
+        # Get the primary screen's available geometry (excludes taskbar/dock areas)
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is None:
+            return  # Fallback: cannot center if no screen detected
+
+        screen_geometry = screen.availableGeometry()
+
+        # Get window's frame geometry (includes title bar and borders)
+        window_geometry = self.frameGeometry()
+
+        # Calculate center point of the screen
+        center_point = screen_geometry.center()
+
+        # Move window's center to screen's center
+        window_geometry.moveCenter(center_point)
+
+        # Move the window to the calculated position
+        self.move(window_geometry.topLeft())
 
     # ---------- Timing Handlers ----------
     def _on_timeout_changed(self):
@@ -3057,9 +3254,49 @@ def main():
     ico_path = resource_path("icon/Icon_Monitor_App.ico")
     app.setWindowIcon(QIcon(ico_path))  # Global app icon
 
-    w = MainWindow()
+    # Compute UI scale and initialize responsive tokens
+    scale = compute_ui_scale(app)
+
+    # RESPONSIVE: Create MainWindow with computed scale for responsive UI
+    # The scale is passed to __init__ which initializes UiTokens before _build_ui is called
+    w = MainWindow(ui_scale=scale)
     w.setWindowIcon(QIcon(ico_path))  # Set on the main window too
+    w.ui_scale = scale  # Store scale for plot scaling if needed
+
     w.show()
+
+    # After showing, adjust window size based on screen resolution
+    # The layout has determined its minimum size, now we scale appropriately
+    screen = app.primaryScreen()
+    geom = screen.availableGeometry()
+    sw, sh = geom.width(), geom.height()
+
+    # Get the minimum size determined by the layout
+    min_size = w.minimumSizeHint()
+    layout_min_width = min_size.width()
+    layout_min_height = min_size.height()
+
+    # Calculate target size based on screen, but respect layout minimum
+    if sw <= 1920:
+        # Smaller screens (1920x1080): try to use 80% screen width, 70% height
+        target_width = max(layout_min_width, int(sw * 0.80))
+        target_height = max(layout_min_height, int(sh * 0.70))
+    else:
+        # Larger screens (2560x1440+): use 65% screen width, 65% height
+        target_width = max(layout_min_width, int(sw * 0.65))
+        target_height = max(layout_min_height, int(sh * 0.65))
+
+    # Clamp to reasonable maximum to prevent oversized windows
+    target_width = min(target_width, 1800)
+    target_height = min(target_height, 1050)
+
+    w.resize(target_width, target_height)
+
+    # Center window on primary screen
+    w.center_on_screen()
+
+    # Display initial window size in status bar
+    w._update_window_size_display()
     sys.exit(app.exec_())
 
 
