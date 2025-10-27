@@ -15,6 +15,8 @@ import time
 import struct
 import bisect
 import ctypes
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
 from dataclasses import dataclass
@@ -263,6 +265,68 @@ class InputRegDef:
         )
 
 
+# ==================== Error Logger ====================
+class ModbusErrorLogger:
+    """Thread-safe error logger for Modbus communication errors"""
+
+    MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
+
+    def __init__(self, log_dir: str = "./log/err", log_filename: str = "Modbus_err.ddata"):
+        self.log_dir = log_dir
+        self.log_file = os.path.join(log_dir, log_filename)
+        self._lock = QtCore.QMutex()
+        self._ensure_log_directory()
+
+    def log_error(self, port: str, baudrate: int, stage: str, attempt: int,
+                  expected_slave: int, expected_func: int,
+                  request: bytes, response: bytes, error: str):
+        """Log a Modbus communication error to NDJSON file"""
+        try:
+            with QtCore.QMutexLocker(self._lock):
+                # Check file size and rotate if needed
+                self._rotate_if_needed()
+
+                # Prepare log entry
+                log_entry = {
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "port": port,
+                    "baudrate": baudrate,
+                    "stage": stage,
+                    "attempt": attempt,
+                    "expected_slave": expected_slave,
+                    "expected_func": expected_func,
+                    "request_hex": " ".join(f"{b:02X}" for b in request),
+                    "response_hex": " ".join(f"{b:02X}" for b in response) if response else "",
+                    "error": error
+                }
+
+                # Write to file (NDJSON format)
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        except Exception:
+            # Silently ignore logging errors to not interfere with main communication
+            pass
+
+    def _ensure_log_directory(self):
+        """Ensure log directory exists"""
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    def _rotate_if_needed(self):
+        """Rotate log file if it exceeds MAX_FILE_SIZE"""
+        try:
+            if os.path.exists(self.log_file):
+                if os.path.getsize(self.log_file) > self.MAX_FILE_SIZE:
+                    # Create new filename with timestamp
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    new_name = os.path.join(self.log_dir, f"Modbus_err_{timestamp}.ddata")
+                    os.rename(self.log_file, new_name)
+        except Exception:
+            pass
+
+
 # ==================== Serial Manager ====================
 class SerialManager(QtCore.QObject):
     """Thread-safe serial communication manager"""
@@ -275,6 +339,10 @@ class SerialManager(QtCore.QObject):
         self.inter_frame_delay = 0.01
         self._lock = QtCore.QMutex()
         self.io_lock = QtCore.QMutex()
+        self.error_logger = ModbusErrorLogger()
+        # Track connection info for error logging
+        self.port_name = ""
+        self.baudrate = 0
 
     def connect_port(self, port_name: str, baudrate: int, bytesize: int,
                      parity: str, stopbits: int, timeout: float) -> Tuple[bool, str]:
@@ -298,6 +366,8 @@ class SerialManager(QtCore.QObject):
                     write_timeout=timeout
                 )
                 self.connected = True
+                self.port_name = port_name
+                self.baudrate = baudrate
 
                 # calc inter-frame delay (3.5 chars)
                 char_time = 11.0 / max(baudrate, 300)
@@ -321,13 +391,24 @@ class SerialManager(QtCore.QObject):
             except Exception as e:
                 return False, f"Disconnect error: {e}"
 
-    def _expected_response_length(self, func: int, buf: bytearray) -> int:
-        """Calculate expected response length"""
+    def _expected_response_length(self, func: int, request: bytes = None, buf: bytearray = None) -> int:
+        """Calculate expected response length
+
+        For 0x03/0x04: Pre-calculate from request quantity to reduce latency.
+        For others: Calculate from response buffer when available.
+        """
         if func == 0x06:
             return 8
-        # FIXED: Added 0x04 support - both 0x03 and 0x04 have identical response format
-        if func in (0x03, 0x04):  # Both 0x03 and 0x04 have identical response format
-            if len(buf) >= 3:
+        # Pre-calculate expected length from request for 0x03/0x04
+        if func in (0x03, 0x04):
+            if request and len(request) >= 6:
+                # Extract quantity from request: bytes 4-5 (big-endian)
+                qty = struct.unpack(">H", request[4:6])[0]
+                # expected_len = 5 + (qty * 2)
+                # 1 byte slave + 1 byte func + 1 byte count + (qty*2) data + 2 bytes CRC
+                return 5 + (qty * 2)
+            # Fallback: calculate from response buffer (old method)
+            if buf and len(buf) >= 3:
                 return 5 + buf[2]
             return 0
         return 0
@@ -357,14 +438,16 @@ class SerialManager(QtCore.QObject):
 
                     start = time.time()
                     buf = bytearray()
-                    expected_len = 0
+                    # Pre-calculate expected length from request (for 0x03/0x04)
+                    expected_len = self._expected_response_length(expected_func, request=request)
 
                     while (time.time() - start) < timeout:
                         chunk = port.read(256)
                         if chunk:
                             buf.extend(chunk)
-                            if len(buf) >= 2:
-                                expected_len = self._expected_response_length(expected_func, buf)
+                            # Update expected_len from response if not yet set
+                            if not expected_len and len(buf) >= 2:
+                                expected_len = self._expected_response_length(expected_func, buf=buf)
                             if expected_len and len(buf) >= expected_len:
                                 break
                         else:
@@ -374,21 +457,74 @@ class SerialManager(QtCore.QObject):
                         if attempt < self.max_retries - 1:
                             time.sleep(0.05)
                             continue
-                        return False, "Timeout - No response"
+                        # Log timeout error
+                        error_msg = "Timeout - No response"
+                        self.error_logger.log_error(
+                            port=self.port_name,
+                            baudrate=self.baudrate,
+                            stage="timeout",
+                            attempt=attempt + 1,
+                            expected_slave=expected_slave,
+                            expected_func=expected_func,
+                            request=request,
+                            response=b'',
+                            error=error_msg
+                        )
+                        return False, error_msg
 
                     if expected_len and len(buf) < expected_len:
                         if attempt < self.max_retries - 1:
                             time.sleep(0.05)
                             continue
-                        return False, f"Incomplete response ({len(buf)}/{expected_len} bytes)"
+                        # Log incomplete response error
+                        error_msg = f"Incomplete response ({len(buf)}/{expected_len} bytes)"
+                        self.error_logger.log_error(
+                            port=self.port_name,
+                            baudrate=self.baudrate,
+                            stage="incomplete_response",
+                            attempt=attempt + 1,
+                            expected_slave=expected_slave,
+                            expected_func=expected_func,
+                            request=request,
+                            response=bytes(buf),
+                            error=error_msg
+                        )
+                        return False, error_msg
 
-                    return ModbusRTU.parse_response(bytes(buf), expected_slave, expected_func)
+                    success, result = ModbusRTU.parse_response(bytes(buf), expected_slave, expected_func)
+                    if not success:
+                        # Log parse error
+                        self.error_logger.log_error(
+                            port=self.port_name,
+                            baudrate=self.baudrate,
+                            stage="parse_error",
+                            attempt=attempt + 1,
+                            expected_slave=expected_slave,
+                            expected_func=expected_func,
+                            request=request,
+                            response=bytes(buf),
+                            error=result
+                        )
+                    return success, result
 
                 except Exception as e:
                     if attempt < self.max_retries - 1:
                         time.sleep(0.05)
                         continue
-                    return False, str(e)
+                    # Log exception
+                    error_msg = str(e)
+                    self.error_logger.log_error(
+                        port=self.port_name,
+                        baudrate=self.baudrate,
+                        stage="exception",
+                        attempt=attempt + 1,
+                        expected_slave=expected_slave,
+                        expected_func=expected_func,
+                        request=request,
+                        response=b'',
+                        error=error_msg
+                    )
+                    return False, error_msg
 
             return False, "Max retries exceeded"
         finally:
@@ -898,6 +1034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         uart_panel = QtWidgets.QFrame()
         uart_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         uart_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
+        uart_panel.setFixedHeight(60)
         uart_layout = QtWidgets.QHBoxLayout(uart_panel)
         uart_layout.setContentsMargins(12, 12, 12, 12)
         uart_layout.setSpacing(10)
@@ -1273,7 +1410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         # Height adjusted: Right column = RD Panel(80) + gap(8) + Plot(800) = 888px to match left column (Motor 80 + gap 8 + RWpanel 800)
-        plot_panel.setFixedSize(910, 800)
+        plot_panel.setFixedHeight(800)
         plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         pv = QtWidgets.QVBoxLayout(plot_panel)
         pv.setContentsMargins(2, 2, 2, 2)
@@ -1303,7 +1440,7 @@ class MainWindow(QtWidgets.QMainWindow):
             combo.addItem("---")
             combo.setStyleSheet(f"font-size:12px; font-weight:500; border:2px solid {channel_colors[i]};")
             # Fit four label+combo pairs within the fixed panel width
-            combo.setFixedWidth(160)
+            # combo.setFixedWidth(160)
             combo.setFixedHeight(35)
 
             # Place all channels on the same row
