@@ -1,0 +1,12 @@
+Bypass Temp,value,0.1,int16
+Bypass ADC,value,1,uint16
+Bypass DI,bitstatus,,1/0
+Bypass Flags,bitstatus,,Active|Standby|Switch|Bypass|Main|Backup|Auto|Manual
+Bypass Speed,value,0.01,uint16
+Bypass Press,value,0.1,int16
+Bypass Mode,bitstatus,,High|Med|Low
+IN7,value,1,int16
+Bypass IN8,value,1,int16
+Bypass IN9,value,1,int16
+Bypass IN10,value,1,int16
+Bypass IN11,value,1,int16

@@ -1,0 +1,12 @@
+Motor Temp,value,0.1,int16
+ADC Raw,value,1,uint16
+DI Status,bitstatus,,1/0
+Normal Status,bitstatus,,Ready|Run|Stop|Fault|Warning|Safe|Normal|OK
+Speed,value,0.01,uint16
+Pressure,value,0.1,int16
+Normal Mode,bitstatus,,High|Med|Low
+IN7,value,1,int16
+Normal IN8,value,1,int16
+Normal IN9,value,1,int16
+Normal IN10,value,1,int16
+Normal IN11,value,1,int16

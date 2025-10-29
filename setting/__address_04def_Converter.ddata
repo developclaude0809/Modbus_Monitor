@@ -1,0 +1,12 @@
+Input Voltage,value,0.1,int16
+Output Voltage,value,0.1,uint16
+Conv Status,bitstatus,,1/0
+Conv Flags,bitstatus,,P|O|N|M|L||J|I|H|G|F|E|D|C|B|A
+Load Current,value,0.01,uint16
+Efficiency,value,0.1,int16
+Conv Mode,bitstatus,,Buck|Boost|BuckBoost
+IN7,value,1,int16
+Conv IN8,value,1,int16
+Conv IN9,value,1,int16
+Conv IN10,value,1,int16
+Conv IN11,value,1,int16

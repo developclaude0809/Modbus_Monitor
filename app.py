@@ -587,20 +587,48 @@ class PollWorker(QtCore.QThread):
                 except Exception as e:
                     self.sigRegister.emit(i, None, str(e))
 
-            # FIXED: Every 20 requests (not cycles), read 8 input registers (0x04) - 20:1 ratio
+            # FIXED: Every 20 requests (not cycles), read input registers (0x04) - 20:1 ratio
             if self._request_counter >= 20:
                 self._request_counter = 0
                 if self._running:
+                    # Array to store all 12 register values (0x00-0x07, 0x08-0x09, 0x0E-0x0F)
+                    all_values = [None] * 12
+                    error_msg = None
+
                     try:
-                        req = ModbusRTU.read_input_registers(slave_id, 0x0000, 8)
-                        ok, result = self.serial_mgr.transact(req, slave_id, 0x04, timeout=timeout)
-                        if ok and isinstance(result, list) and len(result) == 8:
-                            self.sigInputRegisters.emit(result, None)
+                        # Request 1: Read 8 registers starting at 0x0000 (IN0-IN7)
+                        req1 = ModbusRTU.read_input_registers(slave_id, 0x0000, 8)
+                        ok1, result1 = self.serial_mgr.transact(req1, slave_id, 0x04, timeout=timeout)
+                        if ok1 and isinstance(result1, list) and len(result1) == 8:
+                            all_values[0:8] = result1
                         else:
-                            err = result if isinstance(result, str) else "Read failed"
-                            self.sigInputRegisters.emit(None, err)
+                            error_msg = result1 if isinstance(result1, str) else "Read failed at 0x00"
+
+                        # Request 2: Read 2 registers starting at 0x0008 (IN8-IN9)
+                        req2 = ModbusRTU.read_input_registers(slave_id, 0x0008, 2)
+                        ok2, result2 = self.serial_mgr.transact(req2, slave_id, 0x04, timeout=timeout)
+                        if ok2 and isinstance(result2, list) and len(result2) == 2:
+                            all_values[8:10] = result2
+                        else:
+                            err2 = result2 if isinstance(result2, str) else "Read failed at 0x08"
+                            error_msg = error_msg + "; " + err2 if error_msg else err2
+
+                        # Request 3: Read 2 registers starting at 0x000E (IN10-IN11)
+                        req3 = ModbusRTU.read_input_registers(slave_id, 0x000E, 2)
+                        ok3, result3 = self.serial_mgr.transact(req3, slave_id, 0x04, timeout=timeout)
+                        if ok3 and isinstance(result3, list) and len(result3) == 2:
+                            all_values[10:12] = result3
+                        else:
+                            err3 = result3 if isinstance(result3, str) else "Read failed at 0x0E"
+                            error_msg = error_msg + "; " + err3 if error_msg else err3
+
+                        # Emit results
+                        if any(v is not None for v in all_values):
+                            self.sigInputRegisters.emit(all_values, error_msg)
+                        else:
+                            self.sigInputRegisters.emit(None, error_msg or "All reads failed")
                             # FIXED: Emit explicit status message for timeouts
-                            if "timeout" in str(err).lower():
+                            if error_msg and "timeout" in error_msg.lower():
                                 self.sigStatus.emit("Input registers (0x04) timeout - will retry next cycle")
                     except Exception as e:
                         self.sigInputRegisters.emit(None, str(e))
@@ -1123,9 +1151,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._probe_artists = []
         self.probeValueLabels: List[QtWidgets.QLabel] = []  # Per-channel probe value display labels
 
+        # Mode state for 0x04 register definition switching
+        self.mode = "Normal"
+
         self._build_ui()
         self._auto_load_definitions()
-        self._load_input_defs()  # Load 0x04 input register definitions
+        self._restore_last_mode()  # Restore last mode from file
+        self._load_input_defs(self.mode)  # Load 0x04 input register definitions
         self._update_input_titles()  # Update UI labels with custom titles
         self._refresh_ports()
 
@@ -1284,7 +1316,7 @@ class MainWindow(QtWidgets.QMainWindow):
         RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         RWpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
         # Set responsive panel size - allow flexible height
-        RWpanel.setMinimumSize(550, 600)
+        RWpanel.setMinimumSize(550, 750)
         RWpanel.setMaximumWidth(650)
         RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         rv = QtWidgets.QVBoxLayout(RWpanel)
@@ -1386,11 +1418,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Input Register Display (FC 0x04)
         inputRegFrame = QtWidgets.QFrame()
-        inputRegFrame.setMinimumHeight(150)
-        inputRegFrame.setMaximumHeight(250)
+        inputRegFrame.setMinimumHeight(250)
+        inputRegFrame.setMaximumHeight(400)
         inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
 
-        # Create grid layout with 4 rows | 2 columns
+        # Create grid layout with 6 rows | 2 columns (12 registers total)
         inputGrid = QtWidgets.QGridLayout(inputRegFrame)
         inputGrid.setContentsMargins(3, 3, 3, 3)
         inputGrid.setHorizontalSpacing(8)
@@ -1416,6 +1448,41 @@ class MainWindow(QtWidgets.QMainWindow):
             lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
             hbox.addWidget(lbl)
             self.inputRegLabels.append(lbl)  # Store for later title updates
+
+            # Value display
+            val = QtWidgets.QLabel("----")
+            val.setAlignment(QtCore.Qt.AlignCenter)
+            val.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:16px;"
+            )
+            hbox.addWidget(val)
+            self.inputRegValues.append(val)
+
+            # Add to grid
+            inputGrid.addWidget(container, row, col)
+
+        # Add 4 additional registers (IN8-IN11) for addresses 0x08-0x09 and 0x0E-0x0F
+        # Row 4: IN8 (0x08), IN9 (0x09)
+        # Row 5: IN10 (0x0E), IN11 (0x0F)
+        for i in range(8, 12):
+            row = 4 + (i - 8) // 2  # 4,4,5,5
+            col = (i - 8) % 2       # 0,1,0,1
+
+            # Create horizontal container for label + value
+            container = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(container)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)
+
+            # Label "INx"
+            lbl = QtWidgets.QLabel(f"IN{i}")
+            lbl.setFixedWidth(130)
+            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
+            hbox.addWidget(lbl)
+            self.inputRegLabels.append(lbl)
 
             # Value display
             val = QtWidgets.QLabel("----")
@@ -2330,6 +2397,40 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update status bar"""
         self.status.showMessage(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
+    def _set_mode(self, mode: str, persist: bool = False):
+        """Set current mode and reload 0x04 definitions.
+
+        Args:
+            mode: Mode name (e.g., "Normal", "Bypass", "Inverter", "Converter", "Gsensor")
+            persist: If True, save mode to ./setting/last_mode.txt for next startup
+        """
+        if not mode or mode == self.mode:
+            return
+
+        self.mode = mode
+        self._load_input_defs(self.mode)
+        self._set_status(f"Mode set to {self.mode}")
+
+        if persist:
+            try:
+                os.makedirs('./setting', exist_ok=True)
+                with open('./setting/last_mode.txt', 'w', encoding='utf-8') as f:
+                    f.write(self.mode)
+            except Exception:
+                pass
+
+    def _restore_last_mode(self):
+        """Restore last mode from ./setting/last_mode.txt if it exists."""
+        try:
+            mode_file = Path('./setting/last_mode.txt')
+            if mode_file.exists():
+                with open(mode_file, 'r', encoding='utf-8') as f:
+                    saved_mode = f.read().strip()
+                    if saved_mode:
+                        self.mode = saved_mode
+        except Exception:
+            pass  # Keep default mode on any error
+
     def _update_window_size_display(self):
         """Update status bar to show current window size"""
         width = self.width()
@@ -2469,14 +2570,31 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-    def _load_input_defs(self):
-        """Load 0x04 input register definitions from __address_04def.ddata"""
-        # Initialize with defaults for all 8 input registers
-        self.input_defs = [InputRegDef.create_default(i) for i in range(8)]
+    def _load_input_defs(self, mode: str = None):
+        """Load 0x04 input register definitions for given mode.
+
+        Args:
+            mode: Mode name (e.g., "Normal", "Bypass", "Inverter").
+                  Will try __address_04def_{mode}.ddata first,
+                  then fallback to __address_04def.ddata.
+        """
+        # Initialize with defaults for all 12 input registers
+        self.input_defs = [InputRegDef.create_default(i) for i in range(12)]
 
         try:
-            def_path = Path('./setting/__address_04def.ddata')
-            if not def_path.exists():
+            folder = Path('./setting')
+            candidates = []
+
+            # If mode is specified, try mode-specific file first
+            if mode:
+                candidates.append(folder / f"__address_04def_{mode}.ddata")
+
+            # Fallback to generic definition file
+            candidates.append(folder / "__address_04def.ddata")
+
+            # Find first existing file
+            def_path = next((p for p in candidates if p.exists()), None)
+            if not def_path:
                 return  # Use defaults
 
             with open(def_path, 'r', encoding='utf-8') as f:
@@ -2539,6 +2657,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         except Exception:
             # On any error, keep defaults
+            pass
+
+        # Automatically update UI titles after loading
+        try:
+            self._update_input_titles()
+        except Exception:
             pass
 
     def _update_input_titles(self):
@@ -2682,6 +2806,15 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
             return
         try:
+            # Stop polling and plotting before mode switch
+            if self.worker and self.worker.isRunning():
+                self._stop_polling()
+                self._set_status("Polling stopped for mode switch")
+
+            if self.plot_worker and self.plot_worker.isRunning():
+                self._stop_plotting()
+                self._set_status("Plotting stopped for mode switch")
+
             # Convert hex string to bytes
             cmd_bytes = bytes.fromhex(cmd_hex)
             # Calculate and append CRC16
@@ -2691,6 +2824,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # Send directly via serial port (no response check)
             self.serial_mgr.port.write(frame)
             self.serial_mgr.port.flush()
+
+            # Switch to the corresponding mode
+            self._set_mode(btn_text)
 
             self._set_status(f"{btn_text} command sent")
         except Exception as e:
@@ -2724,6 +2860,15 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
             return
         try:
+            # Stop polling and plotting before mode switch
+            if self.worker and self.worker.isRunning():
+                self._stop_polling()
+                self._set_status("Polling stopped for mode switch")
+
+            if self.plot_worker and self.plot_worker.isRunning():
+                self._stop_plotting()
+                self._set_status("Plotting stopped for mode switch")
+
             # selection -> (cmd_hex, new_slave_id)
             mapping = {
                 "Inverter":  ("014600070001024708", 1),
@@ -2749,6 +2894,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Update the ID field to the corresponding number
             self.edSlave.setText(str(new_id))
+
+            # Switch to the corresponding mode
+            self._set_mode(selected)
 
             self._set_status(f"Switch command sent: {selected} → ID set to {new_id}")
         except Exception as e:
@@ -2786,7 +2934,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
-            self.btnPolling.setText("Stop")
+            self.btnPolling.setText("End")
             self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
             self._set_status("Polling started")
         except Exception as e:
@@ -2799,8 +2947,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
-        # Reset input register displays
-        for i in range(8):
+        # Reset input register displays (all 12 registers)
+        for i in range(12):
             self.inputRegValues[i].setText("----")
             self.inputRegValues[i].setStyleSheet(
                 f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
@@ -2894,24 +3042,33 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_input_registers_update(self, values: Optional[List[int]], error: Optional[str]):
         """Update input register displays from polling thread"""
         # FIXED: Add widget existence check to prevent crash on deleted widgets
-        if not hasattr(self, 'inputRegValues') or len(self.inputRegValues) != 8:
+        if not hasattr(self, 'inputRegValues') or len(self.inputRegValues) != 12:
             return
 
         try:  # FIXED: Wrap in try-except to catch widget deletion race
             # FIXED: Added isinstance(values, list) check to prevent TypeError
-            if values is not None and isinstance(values, list) and len(values) == 8:
+            if values is not None and isinstance(values, list) and len(values) == 12:
                 for i, val in enumerate(values):
-                    # Use custom rendering based on definition file
-                    rendered_text = self._render_input04(i, val)
-                    self.inputRegValues[i].setText(rendered_text)
-                    self.inputRegValues[i].setStyleSheet(
-                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                        f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                        f"font-weight:600; font-size:14px;"
-                    )
+                    if val is not None:
+                        # Use custom rendering based on definition file
+                        rendered_text = self._render_input04(i, val)
+                        self.inputRegValues[i].setText(rendered_text)
+                        self.inputRegValues[i].setStyleSheet(
+                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                            f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                            f"font-weight:600; font-size:14px;"
+                        )
+                    else:
+                        # Individual register failed
+                        self.inputRegValues[i].setText("----")
+                        self.inputRegValues[i].setStyleSheet(
+                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                            f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                            f"font-weight:600; font-size:14px;"
+                        )
             else:
                 # Error case
-                for i in range(8):
+                for i in range(12):
                     text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
                     self.inputRegValues[i].setText(text)
                     self.inputRegValues[i].setStyleSheet(

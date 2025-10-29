@@ -1,0 +1,12 @@
+Accel X,value,0.001,int16
+Accel Y,value,0.001,int16
+Accel Z,value,0.001,int16
+Gyro Status,bitstatus,,Active|Idle|Calib|Error|Ready|Sleep|Wake|OK
+Gyro X,value,0.01,int16
+Gyro Y,value,0.01,int16
+Gyro Z,value,0.01,int16
+Temperature,value,0.1,int16
+Gyro IN8,value,1,int16
+Gyro IN9,value,1,int16
+Gyro IN10,value,1,int16
+Gyro IN11,value,1,int16

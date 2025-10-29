@@ -1,0 +1,12 @@
+DC Bus Volt,value,0.1,int16
+Output Current,value,0.01,uint16
+Inverter Status,bitstatus,,Run|Stop|Fault|OC|OV|UV|OT|OK
+Inv Flags,bitstatus,,P|O|N|M|L||J|I|H|G|F|E|D|C|B|A
+Frequency,value,0.01,uint16
+Power,value,0.1,int16
+Inverter Mode,bitstatus,,Auto|Manual|Remote
+IN7,value,1,int16
+Inv IN8,value,1,int16
+Inv IN9,value,1,int16
+Inv IN10,value,1,int16
+Inv IN11,value,1,int16
