@@ -3255,7 +3255,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hasattr(self, 'input_defs') or not hasattr(self, 'inputRegLabels'):
             return
 
-        for i in range(min(8, len(self.input_defs), len(self.inputRegLabels))):
+        for i in range(min(12, len(self.input_defs), len(self.inputRegLabels))):
             self.inputRegLabels[i].setText(self.input_defs[i].title)
 
     def _load_definitions_dialog(self):
@@ -3327,9 +3327,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # Initialize with defaults
             self.input_defs = [InputRegDef.create_default(i) for i in range(12)]
 
-            # Only use first 8 lines (IN0..IN7)
-            for idx, line in enumerate(lines[:8]):
-                if idx >= 8:
+            # Use first 12 lines (IN0..IN11)
+            for idx, line in enumerate(lines[:12]):
+                if idx >= 12:
                     break
 
                 # Parse CSV-like format: [Title],[Format],[Ratio],[Show]
