@@ -1,0 +1,8 @@
+{
+  "file_03": "__address_03def.ddata",
+  "file_04_normal": "__address_04def_Normal.ddata",
+  "file_04_bypass": "__address_04def_Bypass.ddata",
+  "file_04_inverter": "__address_04def_Inverter.ddata",
+  "file_04_converter": "__address_04def_Converter.ddata",
+  "file_04_gsensor": "__address_04def_Gsensor.ddata"
+}

@@ -19,7 +19,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
@@ -243,6 +243,56 @@ class ModbusRTU:
 
         # fallback raw
         return True, response[2:-2]
+
+
+@dataclass
+class LoadMemory:
+    """Single source of truth for LoadSettings.dmem."""
+    file_03: str = ""
+    file_04: dict = field(default_factory=lambda: {
+        "Normal": "", "Bypass": "", "Inverter": "", "Converter": "", "Gsensor": ""
+    })
+
+    @classmethod
+    def load(cls, path: Path = Path("./setting/LoadSettings.dmem")) -> "LoadMemory":
+        if not path.exists():
+            return cls()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # Normalize None -> "" and coerce to filenames (no None shown)
+            def _nz(val: Any) -> str:
+                try:
+                    return "" if val is None else (str(val) if str(val).lower() != "none" else "")
+                except Exception:
+                    return ""
+            return cls(
+                file_03=_nz(data.get("file_03", "")),
+                file_04={
+                    "Normal": _nz(data.get("file_04_normal", "")),
+                    "Bypass": _nz(data.get("file_04_bypass", "")),
+                    "Inverter": _nz(data.get("file_04_inverter", "")),
+                    "Converter": _nz(data.get("file_04_converter", "")),
+                    "Gsensor": _nz(data.get("file_04_gsensor", ""))
+                }
+            )
+        except Exception:
+            return cls()
+
+    def save(self, path: Path = Path("./setting/LoadSettings.dmem")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "file_03": self.file_03,
+            **{f"file_04_{k.lower()}": v for k, v in self.file_04.items()}
+        }
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Aliases for requested API naming
+    @classmethod
+    def read(cls) -> "LoadMemory":
+        return cls.load()
+
+    def write(self) -> None:
+        self.save()
 
 
 # ==================== Input Register Definition ====================
@@ -538,6 +588,7 @@ class PollWorker(QtCore.QThread):
 
     sigRegister = QtCore.pyqtSignal(int, object, object)  # index, value|None, error|None
     sigInputRegisters = QtCore.pyqtSignal(object, object)  # FIXED: Changed from (list, object) to (object, object) - values (list|None), error (str|None)
+    sigModeIndicator = QtCore.pyqtSignal(object)  # value from register 0x0007 (0=Normal, non-0=Bypass)
     sigStatus = QtCore.pyqtSignal(str)
 
     def __init__(self, serial_mgr: SerialManager, get_row_addr_callable, get_cfg_callable, parent=None):
@@ -633,6 +684,18 @@ class PollWorker(QtCore.QThread):
                     except Exception as e:
                         self.sigInputRegisters.emit(None, str(e))
 
+                    # DISABLED: Mode indicator now queried only on button clicks (Connect/Start/Draw)
+                    # # Read mode indicator register 0x0007 (0x03 holding register)
+                    # try:
+                    #     req_mode = ModbusRTU.read_holding_registers(slave_id, 0x0007, 1)
+                    #     ok_mode, result_mode = self.serial_mgr.transact(req_mode, slave_id, 0x03, timeout=timeout)
+                    #     if ok_mode and isinstance(result_mode, list) and result_mode:
+                    #         self.sigModeIndicator.emit(int(result_mode[0]))
+                    #     else:
+                    #         self.sigModeIndicator.emit(None)
+                    # except Exception:
+                    #     self.sigModeIndicator.emit(None)
+
             time.sleep(interval)
 
 
@@ -646,6 +709,7 @@ class PlotWorker(QtCore.QThread):
     """
 
     sigData = QtCore.pyqtSignal(int, object, object)  # channel_index, value|None, timestamp|None
+    sigModeIndicator = QtCore.pyqtSignal(object)  # value from register 0x0007 (0=Normal, non-0=Bypass)
     sigStatus = QtCore.pyqtSignal(str)
 
     def __init__(self, serial_mgr: SerialManager, get_addresses_callable, get_active_callable, get_cfg_callable, parent=None, req_interval_ms: int = 40):
@@ -658,6 +722,7 @@ class PlotWorker(QtCore.QThread):
         self.get_cfg = get_cfg_callable              # returns (slave_id:int, timeout:float)
         self.req_interval_ms = max(1, int(req_interval_ms))
         self._running = True
+        self._mode_check_counter = 0  # Counter for mode indicator check
 
     def stop(self):
         """Stop the plot worker thread"""
@@ -728,6 +793,21 @@ class PlotWorker(QtCore.QThread):
                         self.sigData.emit(ch, None, timestamp)
             except Exception:
                 self.sigData.emit(ch, None, timestamp)
+
+            # DISABLED: Mode indicator now queried only on button clicks (Connect/Start/Draw)
+            # # Check mode indicator every 20 slots
+            # self._mode_check_counter += 1
+            # if self._mode_check_counter >= 20:
+            #     self._mode_check_counter = 0
+            #     try:
+            #         req_mode = ModbusRTU.read_holding_registers(slave_id, 0x0007, 1)
+            #         ok_mode, result_mode = self.serial_mgr.transact(req_mode, slave_id, 0x03, timeout=timeout)
+            #         if ok_mode and isinstance(result_mode, list) and result_mode:
+            #             self.sigModeIndicator.emit(int(result_mode[0]))
+            #         else:
+            #             self.sigModeIndicator.emit(None)
+            #     except Exception:
+            #         self.sigModeIndicator.emit(None)
 
             # Advance to next 40ms slot without drifting the phase
             slot_idx += 1
@@ -974,6 +1054,25 @@ class SearchableCombo(QtWidgets.QComboBox):
         """Return number of items"""
         return self._model.rowCount()
 
+    def currentData(self, role=QtCore.Qt.UserRole):
+        """Get data associated with current item (API-compatible with QComboBox)"""
+        idx = self.currentIndex()
+        if idx < 0 or idx >= self._model.rowCount():
+            return None
+        item = self._model.item(idx)
+        if item is None:
+            return None
+        return item.data(role)
+
+    def itemData(self, index, role=QtCore.Qt.UserRole):
+        """Get data associated with item at index (API-compatible with QComboBox)"""
+        if index < 0 or index >= self._model.rowCount():
+            return None
+        item = self._model.item(index)
+        if item is None:
+            return None
+        return item.data(role)
+
     def setModel(self, model):
         """Override setModel for external compatibility"""
         if model != self._model:
@@ -1106,6 +1205,353 @@ def apply_control_sizes(root: QtWidgets.QWidget, tokens: UiTokens):
     pass
 
 
+# ==================== Load Settings Dialog ====================
+class LoadSettingsDialog(QtWidgets.QDialog):
+    """Dialog to select 03 and 04 definition files"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Load Definition Files")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)  # Increased height for 5 dropdowns
+
+        # Unified memory for saved selections
+        self.load_mem = LoadMemory.load()
+
+        # Scan for .ddata files
+        self.files_03 = []
+        # 04 files categorized by type
+        self.files_04_normal = []
+        self.files_04_bypass = []
+        self.files_04_inverter = []
+        self.files_04_converter = []
+        self.files_04_gsensor = []
+        self._scan_ddata_files()
+
+        # Build UI
+        self._build_ui()
+
+        # Load current selections from LoadSettings.dmem via LoadMemory
+        self._load_current_selections()
+
+    def _scan_ddata_files(self):
+        """Scan ./setting for all .ddata files and use the same list for all combos."""
+        try:
+            setting_folder = Path('./setting')
+            if not setting_folder.exists():
+                return
+
+            all_files = [str(p) for p in setting_folder.glob('*.ddata')]
+            # Sort once by filename for a consistent user experience
+            all_files.sort(key=lambda x: Path(x).name.lower())
+
+            # Use the same full list for every selector (03 and all 04 modes)
+            self.files_03 = list(all_files)
+            self.files_04_normal = list(all_files)
+            self.files_04_bypass = list(all_files)
+            self.files_04_inverter = list(all_files)
+            self.files_04_converter = list(all_files)
+            self.files_04_gsensor = list(all_files)
+
+        except Exception:
+            pass
+
+    def _build_ui(self):
+        """Build dialog UI"""
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Title
+        title = QtWidgets.QLabel("Definition Files Setting")
+        title.setStyleSheet(f"font-size:24px; font-weight:700; color:{Colors.TEXT_PRIMARY}; border:none; padding:10px 0px;")
+        layout.addWidget(title)
+
+        # Form layout
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(10)
+        form.setHorizontalSpacing(15)
+        form.setLabelAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)  # Right-align labels
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.ExpandingFieldsGrow)
+
+        # 03 file selector (combo only)
+        lbl_03 = QtWidgets.QLabel("03 definition")
+        lbl_03.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_03.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_03 = SearchableCombo()
+        self.combo_03.setMinimumWidth(300)
+        self.combo_03.addItem("(Not set)", None)
+        for file in self.files_03:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_03.addItem(display_name, file)
+        self.combo_03.setStyleSheet(f"""
+            QComboBox {{
+                background:{Colors.BG_INPUT};
+                color:{Colors.TEXT_PRIMARY};
+                border:2px solid {Colors.BORDER_NORMAL};
+                border-radius:6px;
+                padding:8px;
+                font-size:13px;
+            }}
+            QComboBox:hover {{
+                border-color:{Colors.BORDER_FOCUS};
+            }}
+            QComboBox QAbstractItemView {{
+                background:{Colors.BG_INPUT};
+                color:{Colors.TEXT_PRIMARY};
+                border:1px solid {Colors.BORDER_NORMAL};
+                selection-background-color:{Colors.SOFT_YELLOW};
+                selection-color:{Colors.MIDNIGHT_NAVY};
+            }}
+        """)
+        form.addRow(lbl_03, self.combo_03)
+
+        # 04 file selectors - 5 separate dropdowns for each type
+        combo_style = f"""
+            QComboBox {{
+                background:{Colors.BG_INPUT};
+                color:{Colors.TEXT_PRIMARY};
+                border:2px solid {Colors.BORDER_NORMAL};
+                border-radius:6px;
+                padding:8px;
+                font-size:13px;
+            }}
+            QComboBox:hover {{
+                border-color:{Colors.BORDER_FOCUS};
+            }}
+            QComboBox QAbstractItemView {{
+                background:{Colors.BG_INPUT};
+                color:{Colors.TEXT_PRIMARY};
+                border:1px solid {Colors.BORDER_NORMAL};
+                selection-background-color:{Colors.SOFT_YELLOW};
+                selection-color:{Colors.MIDNIGHT_NAVY};
+            }}
+        """
+
+        # 04 Normal
+        lbl_04_normal = QtWidgets.QLabel("04 (Normal)")
+        lbl_04_normal.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_04_normal.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_04_normal = SearchableCombo()
+        self.combo_04_normal.setMinimumWidth(300)
+        self.combo_04_normal.addItem("(Not set)", None)
+        for file in self.files_04_normal:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_04_normal.addItem(display_name, file)
+        self.combo_04_normal.setStyleSheet(combo_style)
+        form.addRow(lbl_04_normal, self.combo_04_normal)
+
+        # 04 Bypass
+        lbl_04_bypass = QtWidgets.QLabel("04 (Bypass)")
+        lbl_04_bypass.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_04_bypass.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_04_bypass = SearchableCombo()
+        self.combo_04_bypass.setMinimumWidth(300)
+        self.combo_04_bypass.addItem("(Not set)", None)
+        for file in self.files_04_bypass:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_04_bypass.addItem(display_name, file)
+        self.combo_04_bypass.setStyleSheet(combo_style)
+        form.addRow(lbl_04_bypass, self.combo_04_bypass)
+
+        # 04 Inverter
+        lbl_04_inverter = QtWidgets.QLabel("04 (Inverter)")
+        lbl_04_inverter.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_04_inverter.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_04_inverter = SearchableCombo()
+        self.combo_04_inverter.setMinimumWidth(300)
+        self.combo_04_inverter.addItem("(Not set)", None)
+        for file in self.files_04_inverter:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_04_inverter.addItem(display_name, file)
+        self.combo_04_inverter.setStyleSheet(combo_style)
+        form.addRow(lbl_04_inverter, self.combo_04_inverter)
+
+        # 04 Converter
+        lbl_04_converter = QtWidgets.QLabel("04 (Converter)")
+        lbl_04_converter.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_04_converter.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_04_converter = SearchableCombo()
+        self.combo_04_converter.setMinimumWidth(300)
+        self.combo_04_converter.addItem("(Not set)", None)
+        for file in self.files_04_converter:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_04_converter.addItem(display_name, file)
+        self.combo_04_converter.setStyleSheet(combo_style)
+        form.addRow(lbl_04_converter, self.combo_04_converter)
+
+        # 04 Gsensor
+        lbl_04_gsensor = QtWidgets.QLabel("04 (Gsensor)")
+        lbl_04_gsensor.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_04_gsensor.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_04_gsensor = SearchableCombo()
+        self.combo_04_gsensor.setMinimumWidth(300)
+        self.combo_04_gsensor.addItem("(Not set)", None)
+        for file in self.files_04_gsensor:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_04_gsensor.addItem(display_name, file)
+        self.combo_04_gsensor.setStyleSheet(combo_style)
+        form.addRow(lbl_04_gsensor, self.combo_04_gsensor)
+
+        layout.addLayout(form)
+
+        # Spacer
+        layout.addStretch()
+
+        # Buttons
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+
+        # Info bar: show .dmem path and open folder
+        info_layout = QtWidgets.QHBoxLayout()
+        mem_path = Path('./setting/LoadSettings.dmem')
+        self.lbl_info = QtWidgets.QLabel(f"Memory: {mem_path}")
+        self.lbl_info.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-size:12px; border:none;")
+        info_layout.addWidget(self.lbl_info)
+        info_layout.addStretch()
+        self.btn_open_folder = QtWidgets.QPushButton("Open Folder")
+        self.btn_open_folder.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:12px; padding:6px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+        )
+        def _open_folder():
+            try:
+                folder = mem_path.parent.resolve()
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(folder)))
+            except Exception:
+                pass
+        self.btn_open_folder.clicked.connect(_open_folder)
+        info_layout.addWidget(self.btn_open_folder)
+        layout.addLayout(info_layout)
+
+        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_cancel.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}"
+        )
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+
+        self.btn_apply = QtWidgets.QPushButton("Apply (Save & Load)")
+        self.btn_apply.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+        )
+        self.btn_apply.clicked.connect(self._on_apply)
+        btn_layout.addWidget(self.btn_apply)
+
+        layout.addLayout(btn_layout)
+
+        # Set dialog background
+        self.setStyleSheet(f"QDialog{{background:{Colors.BG_PANEL};}}")
+
+    def _load_current_selections(self):
+        """Load current selections using LoadMemory (match by filename)."""
+        try:
+            mem = self.load_mem
+
+            # Helper to set selection by filename
+            def set_combo_by_filename(combo: QtWidgets.QComboBox, filename: str):
+                if not filename:
+                    # reset normal border
+                    combo.setStyleSheet(combo.styleSheet().replace('border:2px solid red;', f'border:2px solid {Colors.BORDER_NORMAL};'))
+                    return
+                for i in range(1, combo.count()):  # skip (None)
+                    data = combo.itemData(i)
+                    if not data:
+                        continue
+                    if Path(data).name == filename:
+                        # SearchableCombo requires this flag to allow programmatic selection
+                        if hasattr(combo, "_allow_commit"):
+                            combo._allow_commit = True
+                        combo.setCurrentIndex(i)
+                        if hasattr(combo, "_allow_commit"):
+                            combo._allow_commit = False
+                        # reset normal border on found
+                        combo.setToolTip("")
+                        combo.setStyleSheet(combo.styleSheet().replace('border:2px solid red;', f'border:2px solid {Colors.BORDER_NORMAL};'))
+                        break
+                else:
+                    # not found: highlight red and set tooltip
+                    combo.setCurrentIndex(0)
+                    combo.setToolTip("file not found")
+                    combo.setStyleSheet(combo.styleSheet() + " QComboBox{border:2px solid red;} ")
+
+            # Preselect combos using saved memory
+            set_combo_by_filename(self.combo_03, mem.file_03)
+            set_combo_by_filename(self.combo_04_normal, mem.file_04.get("Normal", ""))
+            set_combo_by_filename(self.combo_04_bypass, mem.file_04.get("Bypass", ""))
+            set_combo_by_filename(self.combo_04_inverter, mem.file_04.get("Inverter", ""))
+            set_combo_by_filename(self.combo_04_converter, mem.file_04.get("Converter", ""))
+            set_combo_by_filename(self.combo_04_gsensor, mem.file_04.get("Gsensor", ""))
+        except Exception:
+            pass
+
+    def _on_apply(self):
+        """Persist selections to LoadMemory and accept dialog."""
+        try:
+            # Store only filenames to memory
+            file_03 = ""
+            if self.combo_03.currentIndex() != 0:
+                sel = self.combo_03.currentData()
+                file_03 = Path(sel).name if sel else ""
+
+            file_04 = {
+                "Normal": Path(self.combo_04_normal.currentData()).name if self.combo_04_normal.currentIndex() != 0 and self.combo_04_normal.currentData() else "",
+                "Bypass": Path(self.combo_04_bypass.currentData()).name if self.combo_04_bypass.currentIndex() != 0 and self.combo_04_bypass.currentData() else "",
+                "Inverter": Path(self.combo_04_inverter.currentData()).name if self.combo_04_inverter.currentIndex() != 0 and self.combo_04_inverter.currentData() else "",
+                "Converter": Path(self.combo_04_converter.currentData()).name if self.combo_04_converter.currentIndex() != 0 and self.combo_04_converter.currentData() else "",
+                "Gsensor": Path(self.combo_04_gsensor.currentData()).name if self.combo_04_gsensor.currentIndex() != 0 and self.combo_04_gsensor.currentData() else "",
+            }
+
+            self.load_mem.file_03 = file_03
+            self.load_mem.file_04 = file_04
+            self.load_mem.save()
+        except Exception:
+            pass
+        self.accept()
+
+    def get_selected_03_file(self):
+        """Get selected 03 filename (not full path)."""
+        if self.combo_03.currentIndex() == 0:
+            return ""
+        data = self.combo_03.currentData()
+        return Path(data).name if data else ""
+
+    def get_selected_04_files(self):
+        """Get selected 04 filenames as a dictionary."""
+        result = {}
+
+        if self.combo_04_normal.currentIndex() != 0 and self.combo_04_normal.currentData():
+            result["Normal"] = Path(self.combo_04_normal.currentData()).name
+        else:
+            result["Normal"] = ""
+
+        if self.combo_04_bypass.currentIndex() != 0 and self.combo_04_bypass.currentData():
+            result["Bypass"] = Path(self.combo_04_bypass.currentData()).name
+        else:
+            result["Bypass"] = ""
+
+        if self.combo_04_inverter.currentIndex() != 0 and self.combo_04_inverter.currentData():
+            result["Inverter"] = Path(self.combo_04_inverter.currentData()).name
+        else:
+            result["Inverter"] = ""
+
+        if self.combo_04_converter.currentIndex() != 0 and self.combo_04_converter.currentData():
+            result["Converter"] = Path(self.combo_04_converter.currentData()).name
+        else:
+            result["Converter"] = ""
+
+        if self.combo_04_gsensor.currentIndex() != 0 and self.combo_04_gsensor.currentData():
+            result["Gsensor"] = Path(self.combo_04_gsensor.currentData()).name
+        else:
+            result["Gsensor"] = ""
+
+        return result
+
+
 # ==================== Main Window ====================
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window"""
@@ -1119,6 +1565,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tokens = UiTokens(ui_scale)
 
         self.serial_mgr = SerialManager(self)
+        # Centralized Load Settings memory
+        self.load_mem = LoadMemory.load()
         self.addr_items: List[str] = []  # ["000_name", ...]
         self.worker: Optional[PollWorker] = None
         self.plot_worker: Optional[PlotWorker] = None
@@ -1154,10 +1602,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mode state for 0x04 register definition switching
         self.mode = "Normal"
 
+        # Dictionary to store all 5 04def filenames (keyed by mode name)
+        self.file_04_dict = {
+            "Normal": "",
+            "Bypass": "",
+            "Inverter": "",
+            "Converter": "",
+            "Gsensor": ""
+        }
+
+        # Track currently loaded filenames for dialog display
+        self.current_file_03 = ""
+        self.current_file_04_by_mode = {
+            "Normal": "",
+            "Bypass": "",
+            "Inverter": "",
+            "Converter": "",
+            "Gsensor": ""
+        }
+
         self._build_ui()
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
-        self._load_input_defs(self.mode)  # Load 0x04 input register definitions
+        # Note: _auto_load_definitions() already loads 04 defs from dmem, no need to call _load_input_defs()
         self._update_input_titles()  # Update UI labels with custom titles
         self._refresh_ports()
 
@@ -1233,7 +1700,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Load button
         self.btnLoad = QtWidgets.QPushButton("Load")
         self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
-        self.btnLoad.clicked.connect(self._load_definitions_dialog)
+        self.btnLoad.clicked.connect(self.open_load_dialog)
         uart_layout.addWidget(self.btnLoad)
 
         # Refresh button
@@ -1513,12 +1980,22 @@ class MainWindow(QtWidgets.QMainWindow):
         RDpanel.setMinimumHeight(self.tokens.panel_h_control())
         RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
 
-        rd_layout = QtWidgets.QHBoxLayout(RDpanel)
+        rd_layout = QtWidgets.QGridLayout(RDpanel)
         # RESPONSIVE: Use token-based margins and spacing that scale with display
-        rd_layout.setContentsMargins(int(80 * self.tokens.s), self.tokens.pad()//2, int(50 * self.tokens.s), self.tokens.pad()//2)
-        rd_layout.setSpacing(int(15 * self.tokens.s))
+        rd_layout.setContentsMargins(int(10 * self.tokens.s), self.tokens.pad()//2, int(50 * self.tokens.s), self.tokens.pad()//2)
+        rd_layout.setHorizontalSpacing(int(15 * self.tokens.s))
+        rd_layout.setVerticalSpacing(int(8 * self.tokens.s))
 
-        # Normal button
+        # Row 0, Col 0: Normal indicator text (changes color when active)
+        self.lblNormalLight = QtWidgets.QLabel("Normal")
+        self.lblNormalLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
+        self.lblNormalLight.setStyleSheet(
+            f"QLabel{{color:{Colors.BG_INPUT}; "
+            f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+        )
+        rd_layout.addWidget(self.lblNormalLight, 0, 0)
+
+        # Row 0, Col 1: Normal button
         self.btnNormal = QtWidgets.QPushButton("Normal")
         # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
         self.btnNormal.setMinimumWidth(self.tokens.btn_w())
@@ -1526,35 +2003,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # RESPONSIVE: Use token-based font size
         self.btnNormal.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:3px 3px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
-        rd_layout.addWidget(self.btnNormal)
+        rd_layout.addWidget(self.btnNormal, 0, 1)
 
-        # Bypass button
-        self.btnBypass = QtWidgets.QPushButton("Bypass")
-        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
-        self.btnBypass.setMinimumWidth(self.tokens.btn_w())
-        self.btnBypass.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        # RESPONSIVE: Use token-based font size
-        self.btnBypass.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
-        )
-        self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
-        rd_layout.addWidget(self.btnBypass)
-
-        # List combobox
+        # Row 0, Col 2: List combobox
         self.rdCombo = SearchableCombo(half_width=False)
         self.rdCombo.addItems(["Inverter", "Converter", "Gsensor"])
         # RESPONSIVE: Use token-based font sizes
         self.rdCombo.setStyleSheet(f"""
             QComboBox {{
-                font-size: {self.tokens.font_large()}px;
+                font-size: {self.tokens.font_medium()}px;
                 font-weight: 600;
-                padding: 8px;
+                padding: 3px;
             }}
             QComboBox QAbstractItemView {{
                 font-size: {self.tokens.font_medium()}px;
@@ -1563,9 +2026,32 @@ class MainWindow(QtWidgets.QMainWindow):
         # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
         self.rdCombo.setMinimumWidth(self.tokens.combo_w())
         self.rdCombo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        rd_layout.addWidget(self.rdCombo)
+        rd_layout.addWidget(self.rdCombo, 0, 2)
 
-        # Switch button
+        # Row 1, Col 0: Bypass indicator text (changes color when active)
+        self.lblBypassLight = QtWidgets.QLabel("Bypass")
+        self.lblBypassLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
+        self.lblBypassLight.setStyleSheet(
+            f"QLabel{{color:{Colors.BG_INPUT}; "
+            f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+        )
+        rd_layout.addWidget(self.lblBypassLight, 1, 0)
+
+        # Row 1, Col 1: Bypass button
+        self.btnBypass = QtWidgets.QPushButton("Bypass")
+        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
+        self.btnBypass.setMinimumWidth(self.tokens.btn_w())
+        self.btnBypass.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # RESPONSIVE: Use token-based font size
+        self.btnBypass.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+        )
+        self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
+        rd_layout.addWidget(self.btnBypass, 1, 1)
+
+        # Row 1, Col 2: Switch button
         self.btnSwitch = QtWidgets.QPushButton("Switch")
         # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
         self.btnSwitch.setMinimumWidth(self.tokens.btn_w())
@@ -1573,13 +2059,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # RESPONSIVE: Use token-based font size
         self.btnSwitch.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
         )
         self.btnSwitch.clicked.connect(self._send_switch_command)
-        rd_layout.addWidget(self.btnSwitch)
+        rd_layout.addWidget(self.btnSwitch, 1, 2)
 
-        rd_layout.addStretch()  # Push controls to the left
         # endregion
 
         # region === Reset Panel (Special Reset Buttons - RESPONSIVE) ===
@@ -2397,6 +2882,23 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update status bar"""
         self.status.showMessage(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
+    def _resolve_setting_path(self, name_or_path: str) -> str:
+        """Resolve a stored filename relative to ./setting, or return full path.
+
+        The .dmem stores filenames only. If a full/relative path is provided,
+        return it as-is; otherwise, map filename to ./setting/<filename>.
+        """
+        if not name_or_path:
+            return ""
+        try:
+            p = Path(name_or_path)
+            # If it has any parent component (path separators), treat as a path
+            if p.name != name_or_path:
+                return str(p)
+            return str(Path('./setting') / name_or_path)
+        except Exception:
+            return str(Path('./setting') / name_or_path)
+
     def _set_mode(self, mode: str, persist: bool = False):
         """Set current mode and reload 0x04 definitions.
 
@@ -2408,7 +2910,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self.mode = mode
-        self._load_input_defs(self.mode)
+
+        # Apply 04 definition for current mode from memory
+        self._apply_04_for_current_mode()
         self._set_status(f"Mode set to {self.mode}")
 
         if persist:
@@ -2543,6 +3047,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if ok:
                 self._set_connected_ui(True)
                 self._set_status(f"{msg} @ {baudrate} baud")
+                # Query mode indicator after 200ms
+                QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
             else:
                 raise RuntimeError(msg)
         except Exception as e:
@@ -2556,19 +3062,98 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._stop_polling()
             self.serial_mgr.disconnect_port()
             self._set_connected_ui(False)
+            # Turn off mode indicator lights on disconnect
+            self._on_mode_indicator_update(None)
             self._set_status("Disconnected")
         except Exception as e:
             self._set_status(f"Disconnect error: {e}")
 
     # ---------- Address Definitions ----------
-    def _auto_load_definitions(self):
-        """Auto-load address definitions from default path"""
+    def _init_load_memory(self):
+        """Auto-load address definitions from saved memory or default path."""
         try:
-            default_path = Path('./setting/address_def.ddata')
-            if default_path.exists():
-                self._load_definitions_file(str(default_path))
+            # Sync runtime dict from memory (filenames)
+            self.file_04_dict = dict(self.load_mem.file_04)
+
+            # Try load 03 definitions
+            if self.load_mem.file_03:
+                p03 = Path(self._resolve_setting_path(self.load_mem.file_03))
+                if p03.exists():
+                    self._load_definitions_file(str(p03))
+                    try:
+                        self.current_file_03 = p03.name
+                    except Exception:
+                        pass
+                else:
+                    self._set_status(f"03 def missing: {p03.name}")
+
+            # Try load current mode's 04 definitions
+            mode_file = self.file_04_dict.get(self.mode, "")
+            p04 = Path(self._resolve_setting_path(mode_file)) if mode_file else None
+            if p04 and p04.exists():
+                self._load_input_defs_from_file(str(p04))
+                try:
+                    self.current_file_04_by_mode[self.mode] = p04.name
+                except Exception:
+                    pass
+            elif mode_file:
+                self._set_status(f"04 def missing for {self.mode}: {Path(mode_file).name}")
         except Exception:
             pass
+
+        # If nothing loaded for 04, fall back to default pattern-based lookup
+        if not hasattr(self, 'input_defs') or not self.input_defs or all(d.title.startswith('IN') and d.title[2:].isdigit() for d in self.input_defs if hasattr(d, 'title')):
+            try:
+                folder = Path('./setting')
+                # Try mode-specific file first, then generic fallback
+                candidates = [
+                    folder / f"__address_04def_{self.mode}.ddata",
+                    folder / "__address_04def.ddata"
+                ]
+                def_path = next((p for p in candidates if p.exists()), None)
+                if def_path:
+                    self._load_input_defs_from_file(str(def_path))
+                    try:
+                        self.current_file_04_by_mode[self.mode] = def_path.name
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # If nothing loaded for 03, fall back to default
+        if not hasattr(self, 'addr_items') or not self.addr_items:
+            try:
+                default_path = Path('./setting/__address_03def.ddata')
+                if default_path.exists():
+                    self._load_definitions_file(str(default_path))
+                    try:
+                        self.current_file_03 = default_path.name
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    # Backward compatibility alias
+    def _auto_load_definitions(self):
+        self._init_load_memory()
+
+    def _apply_04_for_current_mode(self):
+        """Apply the 04 definition file for the current mode using memory."""
+        try:
+            mode_file = self.file_04_dict.get(self.mode, "")
+            resolved = self._resolve_setting_path(mode_file) if mode_file else ""
+            if resolved and Path(resolved).exists():
+                self._load_input_defs_from_file(resolved)
+                self._update_input_titles()
+                self._set_status(f"Loaded 04 {self.mode}: {Path(resolved).name}")
+                try:
+                    self.current_file_04_by_mode[self.mode] = Path(resolved).name
+                except Exception:
+                    pass
+            elif mode_file:
+                self._set_status(f"04 def missing for {self.mode}: {Path(mode_file).name}")
+        except Exception as e:
+            self._set_status(f"Failed to load 04 for {self.mode}: {e}")
 
     def _load_input_defs(self, mode: str = None):
         """Load 0x04 input register definitions for given mode.
@@ -2674,14 +3259,132 @@ class MainWindow(QtWidgets.QMainWindow):
             self.inputRegLabels[i].setText(self.input_defs[i].title)
 
     def _load_definitions_dialog(self):
-        """Show file dialog to load address definitions"""
-        start_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if getattr(sys, 'frozen', False) else os.getcwd()
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Address Definition File", start_dir,
-            "Data files (*.ddata);;Text files (*.txt);;All files (*.*)"
-        )
-        if path:
-            self._load_definitions_file(path)
+        """Show custom dialog to select 03 and 04 definition files"""
+        dialog = LoadSettingsDialog(self)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            # Get selected filenames (not full paths)
+            file_03 = dialog.get_selected_03_file()
+            file_04_dict = dialog.get_selected_04_files()
+
+            # Update unified memory and persist
+            self.load_mem.file_03 = file_03
+            self.load_mem.file_04 = dict(file_04_dict)
+            self.load_mem.save()
+
+            # Apply the selections
+            self._apply_load_settings(file_03, file_04_dict)
+
+            # No message box after apply per request; rely on status bar updates
+
+    # Public alias requested
+    def open_load_dialog(self):
+        self._load_definitions_dialog()
+
+    def _apply_load_settings(self, file_03: str, file_04_dict: dict):
+        """Apply selected definition files (filenames, resolved under ./setting)."""
+        try:
+            # Load 03 file (holding registers), resolve to ./setting
+            if file_03:
+                p03 = self._resolve_setting_path(file_03)
+                if p03 and Path(p03).exists():
+                    self._load_definitions_file(p03)
+                    self._set_status(f"Loaded 03 definitions: {Path(p03).name}")
+                    try:
+                        self.current_file_03 = Path(p03).name
+                    except Exception:
+                        pass
+
+            # Store 04 filenames in a dictionary for later mode-based loading
+            self.file_04_dict = dict(file_04_dict)
+
+            # Load the current mode's 04 file
+            current_mode_file = file_04_dict.get(self.mode, "")
+            if current_mode_file:
+                p04 = self._resolve_setting_path(current_mode_file)
+                if p04 and Path(p04).exists():
+                    self._load_input_defs_from_file(p04)
+                    self._set_status(f"Loaded 04 {self.mode} definitions: {Path(p04).name}")
+                    try:
+                        self.current_file_04_by_mode[self.mode] = Path(p04).name
+                    except Exception:
+                        pass
+
+            loaded_count = sum(1 for v in file_04_dict.values() if v)
+            if file_03 or loaded_count > 0:
+                self._set_status(f"Loaded definitions successfully (03 + {loaded_count} 04 types)")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"Failed to apply settings:\n{e}")
+            self._set_status(f"Failed to apply load settings: {e}")
+
+    
+
+    def _load_input_defs_from_file(self, filepath: str):
+        """Load 0x04 input register definitions from a specific file"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f if line.strip()]
+
+            # Initialize with defaults
+            self.input_defs = [InputRegDef.create_default(i) for i in range(12)]
+
+            # Only use first 8 lines (IN0..IN7)
+            for idx, line in enumerate(lines[:8]):
+                if idx >= 8:
+                    break
+
+                # Parse CSV-like format: [Title],[Format],[Ratio],[Show]
+                parts = [p.strip() for p in line.split(',')]
+
+                # Extract fields with defaults
+                title = parts[0] if len(parts) > 0 and parts[0] else f"IN{idx}"
+                fmt = parts[1].lower() if len(parts) > 1 and parts[1] else "value"
+
+                # Validate format
+                if fmt not in ("value", "bitstatus", "valstatus"):
+                    fmt = "value"
+
+                # Parse ratio
+                ratio = 1.0
+                if len(parts) > 2 and parts[2]:
+                    try:
+                        ratio = float(parts[2])
+                    except ValueError:
+                        ratio = 1.0
+
+                # Parse show field
+                show_raw = parts[3] if len(parts) > 3 and parts[3] else ""
+
+                if fmt == "value":
+                    show = show_raw if show_raw in ("int16", "uint16") else "int16"
+                elif fmt == "bitstatus":
+                    if not show_raw or show_raw == "1/0":
+                        show = "1/0"
+                    else:
+                        labels = show_raw.split('|')
+                        labels = labels[:16]
+                        show = labels
+                elif fmt == "valstatus":
+                    labels = [s.strip() for s in show_raw.split('|')] if show_raw else []
+                    labels = labels[:16]
+                    show = labels
+
+                # Store the definition
+                self.input_defs[idx] = InputRegDef(
+                    title=title,
+                    fmt=fmt,
+                    ratio=ratio,
+                    show=show
+                )
+
+            # Update UI
+            self._update_input_titles()
+            try:
+                # Track last loaded 04 per current mode for dialog display
+                self.current_file_04_by_mode[self.mode] = Path(filepath).name
+            except Exception:
+                pass
+        except Exception as e:
+            raise Exception(f"Failed to load 04 definitions: {e}")
 
     def _load_definitions_file(self, filepath: str):
         """Load address definitions from file
@@ -2734,6 +3437,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
             fname = Path(filepath).name
             self._set_status(f"Loaded {len(lines)} addresses from {fname}")
+            try:
+                # Track last loaded 03 file for dialog display
+                self.current_file_03 = Path(filepath).name
+            except Exception:
+                pass
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to load file:\n{e}")
             self._set_status(f"Failed to load file: {e}")
@@ -2772,8 +3480,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not ok:
                 raise RuntimeError(result)
 
-            # Clear on success per spec
-            self.edMotorValue.clear()
+            # Keep the motor value in the input box (don't clear it)
             self._set_status(f"Motor command sent: addr 0x{addr:04X} = {value}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Motor Control Error", str(e))
@@ -2829,6 +3536,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_mode(btn_text)
 
             self._set_status(f"{btn_text} command sent")
+            # Query mode indicator after 1 second
+            QtCore.QTimer.singleShot(2000, self._query_mode_indicator_once)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "RD Command Error", str(e))
             self._set_status(f"RD command failed: {e}")
@@ -2899,6 +3608,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_mode(selected)
 
             self._set_status(f"Switch command sent: {selected} → ID set to {new_id}")
+            # Query mode indicator after 1 second
+            QtCore.QTimer.singleShot(1000, self._query_mode_indicator_once)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Switch Command Error", str(e))
             self._set_status(f"Switch command failed: {e}")
@@ -2931,12 +3642,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker = PollWorker(self.serial_mgr, get_row_addr, get_cfg, self)
             self.worker.sigRegister.connect(self._on_register_update)
             self.worker.sigInputRegisters.connect(self._on_input_registers_update)
+            self.worker.sigModeIndicator.connect(self._on_mode_indicator_update)
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
             self.btnPolling.setText("End")
             self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
             self._set_status("Polling started")
+            # Query mode indicator after 200ms
+            QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
             self._set_status(f"Failed to start polling: {e}")
@@ -2963,12 +3677,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_register_update(self, index: int, value: Optional[int], error: Optional[str]):
         """Update register display from polling thread"""
         if value is not None:
+            # Update value and restore normal border
             self.rowValues[index].setText(str(value))
             self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
         else:
-            text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
-            self.rowValues[index].setText(text)
-            self.rowValues[index].setStyleSheet(f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
+            # Keep existing value but show red border to indicate error
+            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
 
     def _render_input04(self, index: int, raw_value: int) -> str:
         """Render 0x04 input register value according to its definition"""
@@ -3050,7 +3764,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if values is not None and isinstance(values, list) and len(values) == 12:
                 for i, val in enumerate(values):
                     if val is not None:
-                        # Use custom rendering based on definition file
+                        # Use custom rendering based on definition file and restore normal border
                         rendered_text = self._render_input04(i, val)
                         self.inputRegValues[i].setText(rendered_text)
                         self.inputRegValues[i].setStyleSheet(
@@ -3059,26 +3773,74 @@ class MainWindow(QtWidgets.QMainWindow):
                             f"font-weight:600; font-size:14px;"
                         )
                     else:
-                        # Individual register failed
-                        self.inputRegValues[i].setText("----")
+                        # Individual register failed - keep existing value but show red border
                         self.inputRegValues[i].setStyleSheet(
                             f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                            f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                            f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
                             f"font-weight:600; font-size:14px;"
                         )
             else:
-                # Error case
+                # Error case - keep existing values but show red border to indicate error
                 for i in range(12):
-                    text = "Timeout" if (error and "timeout" in error.lower()) else "ERR"
-                    self.inputRegValues[i].setText(text)
                     self.inputRegValues[i].setStyleSheet(
-                        f"color:{Colors.STATUS_ERROR}; background:{Colors.BG_PANEL}; "
+                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
                         f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
                         f"font-weight:600; font-size:14px;"
                     )
         except (RuntimeError, AttributeError):
             # FIXED: Widget was deleted during update, exit gracefully
             return
+
+    def _query_mode_indicator_once(self):
+        """Query mode indicator register 0x0007 once and update UI"""
+        if not self.serial_mgr.connected:
+            return
+        try:
+            slave_id = int(self.edSlave.text())
+            timeout = self.timeout_ms / 1000.0
+            req = ModbusRTU.read_holding_registers(slave_id, 0x0007, 1)
+            ok, result = self.serial_mgr.transact(req, slave_id, 0x03, timeout=timeout)
+            if ok and isinstance(result, list) and result:
+                self._on_mode_indicator_update(int(result[0]))
+            else:
+                self._on_mode_indicator_update(None)
+        except Exception:
+            self._on_mode_indicator_update(None)
+
+    @QtCore.pyqtSlot(object)
+    def _on_mode_indicator_update(self, value: Optional[int]):
+        """Update Normal/Bypass indicator text color based on register 0x0007 value"""
+        if value is not None:
+            if value == 0:
+                # Normal mode (0) - Normal text turns red (ON), Bypass text stays gray (OFF)
+                self.lblNormalLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+                self.lblBypassLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.BG_INPUT}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+            else:
+                # Bypass mode (non-0) - Normal text stays gray (OFF), Bypass text turns red (ON)
+                self.lblNormalLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.BG_INPUT}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+                self.lblBypassLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+        else:
+            # Error or disconnected - both texts turn gray (OFF)
+            self.lblNormalLight.setStyleSheet(
+                f"QLabel{{color:{Colors.BG_INPUT}; "
+                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+            )
+            self.lblBypassLight.setStyleSheet(
+                f"QLabel{{color:{Colors.BG_INPUT}; "
+                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+            )
 
     # ---------- Write ----------
     def _write_register(self, index: int):
@@ -3114,7 +3876,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if ok2 and isinstance(res2, list) and res2:
                 shown = int(res2[0])
 
-            self.rowEdits[index].clear()
+            # Keep the value in the edit box (don't clear it)
             self.rowValues[index].setText(str(shown))
             self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
             self._set_status(f"Write successful: Address {addr} = {shown}")
@@ -3175,12 +3937,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
             self.plot_worker = PlotWorker(self.serial_mgr, get_addresses, get_active, get_cfg, self)
             self.plot_worker.sigData.connect(self._on_plot_data)
+            self.plot_worker.sigModeIndicator.connect(self._on_mode_indicator_update)
             self.plot_worker.sigStatus.connect(self._set_status)
             self.plot_worker.start()
 
             self.btnDraw.setText("Stop")
             self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
             self._set_status("Plotting started")
+            # Query mode indicator after 200ms
+            QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
