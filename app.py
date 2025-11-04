@@ -1853,6 +1853,9 @@ class MainWindow(QtWidgets.QMainWindow):
             {'x': [], 'y': []} for _ in range(4)  # 4 channels with x (data group index) and y (value)
         ]
 
+        # Load default RR title file
+        self._load_default_rr_titles()
+
         self._build_ui()
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
@@ -4306,6 +4309,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ch_data['x'].clear()
             ch_data['y'].clear()
 
+        # Update titles from .dtbpt file
+        self._update_rr_titles()
+
         self._set_status("Switched to RR Mode")
 
     def _switch_to_03_mode(self):
@@ -4323,6 +4329,20 @@ class MainWindow(QtWidgets.QMainWindow):
         for combo in self.plotCombos:
             combo.setEnabled(True)
 
+        # Restore 03 Mode combo boxes with address items
+        for combo in self.plotCombos:
+            combo.clear()
+            combo.addItem("---")
+            for item in self.addr_items:
+                combo.addItem(item)
+
+        # Restore plot legend to Ch1-Ch4
+        for i, line in enumerate(self.plot_lines):
+            line.set_label(f'Ch{i+1}')
+        self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL,
+                           edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
+        self.plot_canvas.draw_idle()
+
         # Update plot button text
         self.btnDraw.setText("Draw")
 
@@ -4332,6 +4352,17 @@ class MainWindow(QtWidgets.QMainWindow):
             ch_data['value'].clear()
 
         self._set_status("Switched to 03 Mode")
+
+    def _load_default_rr_titles(self):
+        """Load default RR title file (RR_title_default.dtbpt) on startup"""
+        default_path = Path("./setting/RR_title_default.dtbpt")
+        if default_path.exists():
+            try:
+                self.rr_dtbpt_parser = DtbptParser.load(str(default_path))
+            except Exception:
+                # If default file fails to load, parser will remain None
+                # and _update_rr_titles() will use fallback "Data1-4"
+                pass
 
     def _load_dtbpt_file(self):
         """Open file dialog to load .dtbpt title file"""
@@ -4357,7 +4388,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_rr_titles()
 
     def _update_rr_titles(self):
-        """Update plot legend with titles from .dtbpt for current page"""
+        """Update plot legend and combo boxes with titles from .dtbpt for current page"""
         if self.rr_dtbpt_parser:
             titles = self.rr_dtbpt_parser.get_titles(self.rr_current_page)
         else:
@@ -4371,6 +4402,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL,
                            edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
         self.plot_canvas.draw_idle()
+
+        # Update CH1-CH4 combo boxes with current page titles (in RR Mode)
+        if self.current_mode == "RR":
+            for i, combo in enumerate(self.plotCombos):
+                if i < len(titles):
+                    # Clear and update with new title
+                    combo.clear()
+                    combo.addItem(titles[i])
+                    combo.setCurrentIndex(0)
 
     def _start_rr_mode(self):
         """Start RR Mode data acquisition"""
