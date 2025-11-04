@@ -1,0 +1,26 @@
+# page0
+Voltage_A,Voltage_B,Voltage_C,Frequency
+# page1
+Current_A,Current_B,Current_C,Power
+# page2
+Temp_Motor,Temp_Inverter,Temp_Ambient,Humidity
+# page3
+Speed,Torque,Position,Acceleration
+# page4
+Input_1,Input_2,Input_3,Input_4
+# page5
+Output_1,Output_2,Output_3,Output_4
+# page6
+Error_Code,Warning_Code,Status_1,Status_2
+# page7
+Pressure_1,Pressure_2,Pressure_3,Pressure_4
+# page8
+Flow_Rate_1,Flow_Rate_2,Flow_Rate_3,Flow_Rate_4
+# page9
+Level_1,Level_2,Level_3,Level_4
+# page10
+Analog_1,Analog_2,Analog_3,Analog_4
+# page11
+Digital_1,Digital_2,Digital_3,Digital_4
+# page12
+Custom_1,Custom_2,Custom_3,Custom_4

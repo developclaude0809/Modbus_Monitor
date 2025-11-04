@@ -813,6 +813,229 @@ class PlotWorker(QtCore.QThread):
             slot_idx += 1
 
 
+# ==================== RR Mode Support ====================
+@dataclass
+class DtbptParser:
+    """Parser for .dtbpt title files used in RR Mode"""
+    pages: dict = field(default_factory=dict)  # page_num -> [title1, title2, title3, title4]
+
+    @classmethod
+    def load(cls, file_path: str) -> "DtbptParser":
+        """Load .dtbpt file and parse page titles"""
+        parser = cls()
+        if not os.path.exists(file_path):
+            return parser
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                current_page = None
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        # Check if it's a page header like "# page0"
+                        if line.startswith('# page'):
+                            try:
+                                page_num = int(line.replace('# page', '').strip())
+                                current_page = page_num
+                            except ValueError:
+                                pass
+                        continue
+
+                    # Parse comma-separated titles
+                    if current_page is not None:
+                        titles = [t.strip() for t in line.split(',')]
+                        if len(titles) == 4:
+                            parser.pages[current_page] = titles
+                        current_page = None
+        except Exception:
+            pass
+
+        return parser
+
+    def get_titles(self, page: int) -> list:
+        """Get titles for a specific page, or default titles if not found"""
+        return self.pages.get(page, [f"Data{i+1}" for i in range(4)])
+
+
+class RRModeWorker(QtCore.QThread):
+    """Background thread for RR Mode (Rapid Response Mode) high-speed plotting.
+
+    Protocol:
+    1. Handshake: Send 52 52 00 [page] 00, receive 52
+    2. Data Loop: Send 52 52 01 00 00, receive 72 [ii jj] [Data1] [Data2] [Data3] [Data4] 0D
+    3. End: Receive 58 to indicate data transmission complete
+
+    Each data frame contains:
+    - Data Group Index (ii + jj*256): X-axis value
+    - 4 data values (16-bit each): Y-axis values for 4 channels
+    """
+
+    sigData = QtCore.pyqtSignal(int, int, int)  # data_group_index, channel_index, value
+    sigStatus = QtCore.pyqtSignal(str)
+    sigFinished = QtCore.pyqtSignal()
+
+    def __init__(self, serial_mgr: SerialManager, page: int, timeout: float = 0.5, parent=None):
+        super().__init__(parent)
+        self.serial_mgr = serial_mgr
+        self.page = page
+        self.timeout = timeout
+        self._running = True
+        self._handshake_done = False
+
+    def stop(self):
+        """Stop the RR Mode worker thread"""
+        self._running = False
+
+    def run(self):
+        """RR Mode main loop"""
+        try:
+            # Phase 1: Handshake
+            if not self._do_handshake():
+                self.sigStatus.emit("RR Mode handshake failed")
+                self.sigFinished.emit()
+                return
+
+            self.sigStatus.emit(f"RR Mode started (Page {self.page})")
+
+            # Phase 2: Data streaming loop
+            while self._running:
+                result = self._request_data_frame()
+                if result == "END":
+                    self.sigStatus.emit("RR Mode completed (received 58)")
+                    break
+                elif result == "ERROR":
+                    # Continue to next request without retry
+                    continue
+                elif result is None:
+                    # Timeout or no data
+                    continue
+
+        except Exception as e:
+            self.sigStatus.emit(f"RR Mode error: {e}")
+        finally:
+            self.sigFinished.emit()
+
+    def _do_handshake(self) -> bool:
+        """Perform RR Mode handshake: 52 52 00 [page] 00 -> 52"""
+        if not self.serial_mgr.connected or not self.serial_mgr.port:
+            return False
+
+        # Build handshake frame: 52 52 00 [page] 00
+        handshake_frame = bytes([0x52, 0x52, 0x00, self.page & 0xFF, 0x00])
+
+        try:
+            port = self.serial_mgr.port
+            if port is None:
+                return False
+
+            with QtCore.QMutexLocker(self.serial_mgr.io_lock):
+                # Send handshake
+                time.sleep(self.serial_mgr.inter_frame_delay)
+                port.reset_input_buffer()
+                port.reset_output_buffer()
+                port.write(handshake_frame)
+                port.flush()
+
+                # Wait for response: 52
+                start = time.time()
+                while (time.time() - start) < self.timeout:
+                    chunk = port.read(1)
+                    if chunk and chunk[0] == 0x52:
+                        self._handshake_done = True
+                        return True
+
+                return False
+        except Exception:
+            return False
+
+    def _request_data_frame(self) -> Optional[str]:
+        """Request one data frame: 52 52 01 00 00 -> 72 [ii jj] [Data1-4] 0D or 58
+
+        Returns:
+            "END" if received 58 (end marker)
+            "ERROR" if frame parsing failed
+            None if successful or timeout
+        """
+        if not self.serial_mgr.connected or not self.serial_mgr.port:
+            return "ERROR"
+
+        # Build request frame: 52 52 01 00 00
+        request_frame = bytes([0x52, 0x52, 0x01, 0x00, 0x00])
+
+        try:
+            port = self.serial_mgr.port
+            if port is None:
+                return "ERROR"
+
+            with QtCore.QMutexLocker(self.serial_mgr.io_lock):
+                # Send request
+                time.sleep(self.serial_mgr.inter_frame_delay)
+                port.reset_input_buffer()
+                port.reset_output_buffer()
+                port.write(request_frame)
+                port.flush()
+
+                # Wait for response: 72 ... 0D (12 bytes) or 58 (1 byte)
+                start = time.time()
+                buf = bytearray()
+
+                while (time.time() - start) < self.timeout:
+                    chunk = port.read(256)
+                    if chunk:
+                        buf.extend(chunk)
+
+                        # Check for end marker (58)
+                        if len(buf) >= 1 and buf[0] == 0x58:
+                            return "END"
+
+                        # Check for complete data frame (72 ... 0D, 12 bytes)
+                        if len(buf) >= 12 and buf[0] == 0x72 and buf[11] == 0x0D:
+                            # Parse the frame
+                            if self._parse_data_frame(buf[:12]):
+                                return None  # Success
+                            else:
+                                return "ERROR"
+
+                # Timeout
+                return None
+        except Exception:
+            return "ERROR"
+
+    def _parse_data_frame(self, frame: bytes) -> bool:
+        """Parse data frame: 72 [ii jj] [Data1] [Data2] [Data3] [Data4] 0D
+
+        Frame structure (12 bytes):
+        [0]: 72 (header)
+        [1-2]: Data Group Index (little-endian)
+        [3-4]: Data1 (big-endian)
+        [5-6]: Data2 (big-endian)
+        [7-8]: Data3 (big-endian)
+        [9-10]: Data4 (big-endian)
+        [11]: 0D (trailer)
+        """
+        if len(frame) != 12 or frame[0] != 0x72 or frame[11] != 0x0D:
+            return False
+
+        try:
+            # Extract Data Group Index (X-axis) - little-endian
+            data_group_index = frame[1] + (frame[2] << 8)
+
+            # Extract 4 data values (Y-axis) - big-endian
+            data_values = []
+            for i in range(4):
+                offset = 3 + i * 2
+                value = struct.unpack(">H", frame[offset:offset+2])[0]
+                data_values.append(value)
+
+            # Emit data for each channel
+            for ch_idx, value in enumerate(data_values):
+                self.sigData.emit(data_group_index, ch_idx, value)
+
+            return True
+        except Exception:
+            return False
+
+
 # ==================== UI Helpers ====================
 class SearchableCombo(QtWidgets.QComboBox):
     """
@@ -1621,6 +1844,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "Gsensor": ""
         }
 
+        # RR Mode state
+        self.current_mode = "03"  # "03" for 03 Mode (monitoring), "RR" for RR Mode
+        self.rr_worker: Optional[RRModeWorker] = None
+        self.rr_dtbpt_parser: Optional[DtbptParser] = None
+        self.rr_current_page = 0
+        self.rr_data = [
+            {'x': [], 'y': []} for _ in range(4)  # 4 channels with x (data group index) and y (value)
+        ]
+
         self._build_ui()
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
@@ -2175,6 +2407,57 @@ class MainWindow(QtWidgets.QMainWindow):
         # Apply initial channel styles
         for i in range(4):
             self._apply_plot_channel_style(i)
+
+        # RR Mode controls row
+        rr_control_widget = QtWidgets.QWidget()
+        rr_control_layout = QtWidgets.QHBoxLayout(rr_control_widget)
+        rr_control_layout.setContentsMargins(0, 5, 0, 5)
+        rr_control_layout.setSpacing(10)
+
+        # Mode switch button (03 Mode / RR Mode)
+        self.btnModeSwitch = QtWidgets.QPushButton("03")
+        self.btnModeSwitch.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:700; font-size:16px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+        )
+        self.btnModeSwitch.setFixedHeight(35)
+        self.btnModeSwitch.setFixedWidth(80)
+        self.btnModeSwitch.clicked.connect(self._toggle_mode)
+        rr_control_layout.addWidget(self.btnModeSwitch)
+
+        # RR Mode page selector label
+        lbl_page = QtWidgets.QLabel("Page:")
+        lbl_page.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:600; font-size:14px;")
+        rr_control_layout.addWidget(lbl_page)
+
+        # RR Mode page selector (0-12)
+        self.cmbRRPage = SearchableCombo(half_width=False)
+        self.cmbRRPage.setMinimumWidth(80)
+        self.cmbRRPage.setFixedHeight(35)
+        for i in range(13):  # Pages 0-12
+            self.cmbRRPage.addItem(str(i))
+        self.cmbRRPage.setCurrentText("0")
+        self.cmbRRPage.currentIndexChanged.connect(self._on_rr_page_changed)
+        rr_control_layout.addWidget(self.cmbRRPage)
+
+        # Load .dtbpt button
+        self.btnLoadDtbpt = QtWidgets.QPushButton("Load .dtbpt")
+        self.btnLoadDtbpt.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 16px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+        )
+        self.btnLoadDtbpt.setFixedHeight(35)
+        self.btnLoadDtbpt.clicked.connect(self._load_dtbpt_file)
+        rr_control_layout.addWidget(self.btnLoadDtbpt)
+
+        # Initially disable RR controls (enabled only in RR Mode)
+        self.cmbRRPage.setEnabled(False)
+        self.btnLoadDtbpt.setEnabled(False)
+
+        rr_control_layout.addStretch()
+        pv.addWidget(rr_control_widget)
 
         # Draw button
         self.btnDraw = QtWidgets.QPushButton("Draw")
@@ -3887,11 +4170,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------- Plotting ----------
     def _toggle_plotting(self):
-        """Toggle real-time plotting"""
-        if self.plot_worker and self.plot_worker.isRunning():
-            self._stop_plotting()
+        """Toggle real-time plotting (mode-aware)"""
+        if self.current_mode == "03":
+            # 03 Mode plotting
+            if self.plot_worker and self.plot_worker.isRunning():
+                self._stop_plotting()
+            else:
+                self._start_plotting()
         else:
-            self._start_plotting()
+            # RR Mode plotting
+            if self.rr_worker and self.rr_worker.isRunning():
+                self._stop_rr_mode()
+            else:
+                self._start_rr_mode()
 
     def _start_plotting(self):
         """Start real-time plotting"""
@@ -3982,6 +4273,187 @@ class MainWindow(QtWidgets.QMainWindow):
             # Update plot
             self._update_plot()
 
+    # ---------- RR Mode Methods ----------
+    def _toggle_mode(self):
+        """Toggle between 03 Mode and RR Mode"""
+        if self.current_mode == "03":
+            self._switch_to_rr_mode()
+        else:
+            self._switch_to_03_mode()
+
+    def _switch_to_rr_mode(self):
+        """Switch from 03 Mode to RR Mode"""
+        # Stop any active polling or plotting
+        if self.worker and self.worker.isRunning():
+            self._stop_polling()
+        if self.plot_worker and self.plot_worker.isRunning():
+            self._stop_plotting()
+
+        self.current_mode = "RR"
+        self.btnModeSwitch.setText("RR")
+
+        # Enable RR controls, disable 03 mode channel selectors
+        self.cmbRRPage.setEnabled(True)
+        self.btnLoadDtbpt.setEnabled(True)
+        for combo in self.plotCombos:
+            combo.setEnabled(False)
+
+        # Update plot button text
+        self.btnDraw.setText("Plot (RR)")
+
+        # Clear plot data
+        for ch_data in self.rr_data:
+            ch_data['x'].clear()
+            ch_data['y'].clear()
+
+        self._set_status("Switched to RR Mode")
+
+    def _switch_to_03_mode(self):
+        """Switch from RR Mode to 03 Mode"""
+        # Stop RR worker if running
+        if self.rr_worker and self.rr_worker.isRunning():
+            self._stop_rr_mode()
+
+        self.current_mode = "03"
+        self.btnModeSwitch.setText("03")
+
+        # Disable RR controls, enable 03 mode channel selectors
+        self.cmbRRPage.setEnabled(False)
+        self.btnLoadDtbpt.setEnabled(False)
+        for combo in self.plotCombos:
+            combo.setEnabled(True)
+
+        # Update plot button text
+        self.btnDraw.setText("Draw")
+
+        # Clear plot data
+        for ch_data in self.plot_data:
+            ch_data['time'].clear()
+            ch_data['value'].clear()
+
+        self._set_status("Switched to 03 Mode")
+
+    def _load_dtbpt_file(self):
+        """Open file dialog to load .dtbpt title file"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load .dtbpt Title File",
+            "./setting",
+            "Title Files (*.dtbpt);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                self.rr_dtbpt_parser = DtbptParser.load(file_path)
+                self._update_rr_titles()
+                self._set_status(f"Loaded {Path(file_path).name}")
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(self, "Load Error", f"Failed to load .dtbpt file:\n{e}")
+                self._set_status(f"Failed to load .dtbpt: {e}")
+
+    def _on_rr_page_changed(self, index: int):
+        """Handle RR page selection change"""
+        self.rr_current_page = index
+        self._update_rr_titles()
+
+    def _update_rr_titles(self):
+        """Update plot legend with titles from .dtbpt for current page"""
+        if self.rr_dtbpt_parser:
+            titles = self.rr_dtbpt_parser.get_titles(self.rr_current_page)
+        else:
+            titles = [f"Data{i+1}" for i in range(4)]
+
+        # Update plot legend
+        for i, line in enumerate(self.plot_lines):
+            if i < len(titles):
+                line.set_label(titles[i])
+
+        self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL,
+                           edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
+        self.plot_canvas.draw_idle()
+
+    def _start_rr_mode(self):
+        """Start RR Mode data acquisition"""
+        if not self.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
+            return
+
+        try:
+            # Clear previous data
+            for ch_data in self.rr_data:
+                ch_data['x'].clear()
+                ch_data['y'].clear()
+            self.manual_zoom_active = False
+            self.zoom_history.clear()
+
+            timeout = self.timeout_ms / 1000.0
+            self.rr_worker = RRModeWorker(self.serial_mgr, self.rr_current_page, timeout, self)
+            self.rr_worker.sigData.connect(self._on_rr_data)
+            self.rr_worker.sigStatus.connect(self._set_status)
+            self.rr_worker.sigFinished.connect(self._on_rr_finished)
+            self.rr_worker.start()
+
+            self.btnDraw.setText("Stop")
+            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
+            self._set_status(f"RR Mode plotting started (Page {self.rr_current_page})")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", str(e))
+            self._set_status(f"Failed to start RR Mode: {e}")
+
+    def _stop_rr_mode(self):
+        """Stop RR Mode data acquisition"""
+        if self.rr_worker:
+            self.rr_worker.stop()
+            self.rr_worker.wait(1500)
+            self.rr_worker = None
+        self.btnDraw.setText("Plot (RR)")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self._set_status("RR Mode stopped")
+
+    @QtCore.pyqtSlot(int, int, int)
+    def _on_rr_data(self, data_group_index: int, channel: int, value: int):
+        """Handle RR Mode data point"""
+        # Convert to signed int16 if needed
+        if value > 32767:
+            value -= 65536
+
+        # Store data
+        self.rr_data[channel]['x'].append(data_group_index)
+        self.rr_data[channel]['y'].append(value)
+
+        # Keep only last 1000 points per channel
+        if len(self.rr_data[channel]['x']) > 1000:
+            self.rr_data[channel]['x'].pop(0)
+            self.rr_data[channel]['y'].pop(0)
+
+        # Update plot
+        self._update_rr_plot()
+
+    def _update_rr_plot(self):
+        """Update plot with RR Mode data (X = Data Group Index, Y = values)"""
+        try:
+            for i, line in enumerate(self.plot_lines):
+                x_data = self.rr_data[i]['x']
+                y_data = self.rr_data[i]['y']
+                line.set_data(x_data, y_data)
+
+            # Only auto-scale if manual zoom is not active
+            if not self.manual_zoom_active:
+                self.plot_ax.relim()
+                self.plot_ax.autoscale_view()
+
+            self.plot_canvas.draw()
+        except Exception:
+            pass  # Silently ignore plot update errors
+
+    @QtCore.pyqtSlot()
+    def _on_rr_finished(self):
+        """Handle RR Mode worker finished signal"""
+        self.rr_worker = None
+        self.btnDraw.setText("Plot (RR)")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+
     def _update_plot(self):
         """Redraw the plot with current data"""
         try:
@@ -4044,6 +4516,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._stop_polling()
             if self.plot_worker:
                 self._stop_plotting()
+            if self.rr_worker:
+                self._stop_rr_mode()
             if self.serial_mgr.connected:
                 self.serial_mgr.disconnect_port()
         except Exception:
