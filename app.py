@@ -862,12 +862,12 @@ class RRModeWorker(QtCore.QThread):
 
     Protocol:
     1. Handshake: Send 52 52 00 [page] 00, receive 52
-    2. Data Loop: Send 52 52 01 00 00, receive 72 [ii jj] [Data1] [Data2] [Data3] [Data4] 0D
+    2. Data Loop: Send 52 52 01 00 00, receive 72 [ii jj] [Data1-4] 0D
     3. End: Receive 58 to indicate data transmission complete
 
     Each data frame contains:
-    - Data Group Index (ii + jj*256): X-axis value
-    - 4 data values (16-bit each): Y-axis values for 4 channels
+    - Data Group Index (big-endian 16-bit: ii*256 + jj): X-axis value
+    - 4 data values (16-bit big-endian each): Y-axis values for 4 channels
     """
 
     sigData = QtCore.pyqtSignal(int, int, int)  # data_group_index, channel_index, value
@@ -1006,7 +1006,8 @@ class RRModeWorker(QtCore.QThread):
 
         Frame structure (12 bytes):
         [0]: 72 (header)
-        [1-2]: Data Group Index (little-endian)
+        [1-2]: Data Group Index [ii jj] where index = ii*256 + jj (big-endian)
+               frame[1]=ii (high byte), frame[2]=jj (low byte)
         [3-4]: Data1 (big-endian)
         [5-6]: Data2 (big-endian)
         [7-8]: Data3 (big-endian)
@@ -1017,8 +1018,9 @@ class RRModeWorker(QtCore.QThread):
             return False
 
         try:
-            # Extract Data Group Index (X-axis) - little-endian
-            data_group_index = frame[1] + (frame[2] << 8)
+            # Extract Data Group Index (X-axis) - big-endian 16-bit
+            # ii*256 + jj where ii=frame[1], jj=frame[2]
+            data_group_index = frame[1] * 256 + frame[2]
 
             # Extract 4 data values (Y-axis) - big-endian
             data_values = []
@@ -2702,7 +2704,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Sample each active channel
         channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
-        status_parts = [f"Probe @ {x_probe:.3f}s"]
+
+        # Determine which data source to use based on current mode
+        if self.current_mode == "RR":
+            # RR mode: x is data group index, display as "Probe @ Index {x}"
+            status_parts = [f"Probe @ Index {x_probe:.1f}"]
+        else:
+            # 03 mode: x is time in seconds
+            status_parts = [f"Probe @ {x_probe:.3f}s"]
 
         for i in range(4):
             # Check if channel is active (enabled for plotting)
@@ -2710,24 +2719,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._set_probe_label(i, "OFF", active=False)
                 continue
 
-            times = self.plot_data[i]['time']
-            values = self.plot_data[i]['value']
+            # Select data source based on current mode
+            if self.current_mode == "RR":
+                x_data = self.rr_data[i]['x']
+                y_data = self.rr_data[i]['y']
+            else:
+                x_data = self.plot_data[i]['time']
+                y_data = self.plot_data[i]['value']
 
-            if not times:
+            if not x_data:
                 status_parts.append(f"CH{i+1}=N/A")
                 self._set_probe_label(i, "N/A", active=False)
                 continue
 
-            # Find nearest time index
-            idx = self._nearest_index(times, x_probe)
+            # Find nearest index
+            idx = self._nearest_index(x_data, x_probe)
             if idx is None:
                 status_parts.append(f"CH{i+1}=N/A")
                 self._set_probe_label(i, "N/A", active=False)
                 continue
 
             # Get the value at that index
-            y_val = values[idx]
-            x_val = times[idx]
+            y_val = y_data[idx]
+            x_val = x_data[idx]
 
             # Draw circle marker
             marker = self.plot_ax.plot(x_val, y_val, 'o', color=channel_colors[i],
