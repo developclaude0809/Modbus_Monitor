@@ -16,6 +16,7 @@ import struct
 import bisect
 import ctypes
 import json
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Any, List
@@ -870,7 +871,7 @@ class RRModeWorker(QtCore.QThread):
     - 4 data values (16-bit big-endian each): Y-axis values for 4 channels
     """
 
-    sigData = QtCore.pyqtSignal(int, int, int)  # data_group_index, channel_index, value
+    sigFrame = QtCore.pyqtSignal(int, tuple)  # data_group_index, (d1, d2, d3, d4)
     sigStatus = QtCore.pyqtSignal(str)
     sigFinished = QtCore.pyqtSignal()
 
@@ -1029,9 +1030,8 @@ class RRModeWorker(QtCore.QThread):
                 value = struct.unpack(">H", frame[offset:offset+2])[0]
                 data_values.append(value)
 
-            # Emit data for each channel
-            for ch_idx, value in enumerate(data_values):
-                self.sigData.emit(data_group_index, ch_idx, value)
+            # Emit one frame with all channel data
+            self.sigFrame.emit(data_group_index, tuple(data_values))
 
             return True
         except Exception:
@@ -1852,8 +1852,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rr_dtbpt_parser: Optional[DtbptParser] = None
         self.rr_current_page = 0
         self.rr_data = [
-            {'x': [], 'y': []} for _ in range(4)  # 4 channels with x (data group index) and y (value)
+            {'x': deque(maxlen=2000), 'y': deque(maxlen=2000)} for _ in range(4)  # 4 channels with x (data group index) and y (value)
         ]
+
+        # RR mode performance optimizations
+        self._rr_dirty = False
+        self._rr_autoscale_counter = 0
+        self.rr_window_width = 800  # Sliding window width in data points
+        self.rr_plot_timer = QtCore.QTimer(self)
+        self.rr_plot_timer.setInterval(33)  # 30 FPS (~33ms); set to 16 for ~60 FPS
+        self.rr_plot_timer.timeout.connect(self._update_rr_plot)
 
         # Load default RR title file
         self._load_default_rr_titles()
@@ -2490,7 +2498,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_lines = []
         colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
         for i, color in enumerate(colors):
-            line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=2)
+            line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=1.5)
+            line.set_antialiased(False)  # Disable antialiasing for better performance in RR mode
             self.plot_lines.append(line)
         self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL, edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
 
@@ -4442,10 +4451,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
             timeout = self.timeout_ms / 1000.0
             self.rr_worker = RRModeWorker(self.serial_mgr, self.rr_current_page, timeout, self)
-            self.rr_worker.sigData.connect(self._on_rr_data)
+            self.rr_worker.sigFrame.connect(self._on_rr_frame)
             self.rr_worker.sigStatus.connect(self._set_status)
             self.rr_worker.sigFinished.connect(self._on_rr_finished)
             self.rr_worker.start()
+
+            # Start the plot update timer for throttled redraws
+            self.rr_plot_timer.start()
 
             self.btnDraw.setText("Stop")
             self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
@@ -4457,6 +4469,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stop_rr_mode(self):
         """Stop RR Mode data acquisition"""
+        # Stop the plot update timer
+        self.rr_plot_timer.stop()
+
         if self.rr_worker:
             self.rr_worker.stop()
             self.rr_worker.wait(1500)
@@ -4465,39 +4480,60 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
         self._set_status("RR Mode stopped")
 
-    @QtCore.pyqtSlot(int, int, int)
-    def _on_rr_data(self, data_group_index: int, channel: int, value: int):
-        """Handle RR Mode data point"""
-        # Convert to signed int16 if needed
-        if value > 32767:
-            value -= 65536
+    @QtCore.pyqtSlot(int, tuple)
+    def _on_rr_frame(self, data_group_index: int, values: tuple):
+        """Handle RR Mode data frame (one frame contains all 4 channel values)"""
+        # values = (d1, d2, d3, d4)
+        for ch, value in enumerate(values):
+            # Convert to signed int16 if needed
+            if value > 32767:
+                value -= 65536
 
-        # Store data
-        self.rr_data[channel]['x'].append(data_group_index)
-        self.rr_data[channel]['y'].append(value)
+            # Store data (deque automatically maintains maxlen)
+            self.rr_data[ch]['x'].append(data_group_index)
+            self.rr_data[ch]['y'].append(value)
 
-        # Keep only last 1000 points per channel
-        if len(self.rr_data[channel]['x']) > 1000:
-            self.rr_data[channel]['x'].pop(0)
-            self.rr_data[channel]['y'].pop(0)
-
-        # Update plot
-        self._update_rr_plot()
+        # Mark data as dirty for timer-based update
+        self._rr_dirty = True
 
     def _update_rr_plot(self):
-        """Update plot with RR Mode data (X = Data Group Index, Y = values)"""
+        """Update plot with RR Mode data (X = Data Group Index, Y = values)
+
+        Optimized for high-frequency updates:
+        - Only updates if data has changed (_rr_dirty flag)
+        - Uses sliding X-axis window instead of full autoscale
+        - Throttles Y-axis autoscale to every 10th frame
+        - Uses draw_idle() for non-blocking redraw
+        """
+        if not self._rr_dirty:
+            return
+        self._rr_dirty = False
+
         try:
+            # Update line data and find maximum X value
+            xmax = None
             for i, line in enumerate(self.plot_lines):
                 x_data = self.rr_data[i]['x']
                 y_data = self.rr_data[i]['y']
+                if x_data:
+                    curr_xmax = x_data[-1]
+                    xmax = curr_xmax if xmax is None else max(xmax, curr_xmax)
                 line.set_data(x_data, y_data)
 
             # Only auto-scale if manual zoom is not active
             if not self.manual_zoom_active:
-                self.plot_ax.relim()
-                self.plot_ax.autoscale_view()
+                # Sliding X-axis window: show the last W points
+                if xmax is not None:
+                    self.plot_ax.set_xlim(xmax - self.rr_window_width, xmax)
 
-            self.plot_canvas.draw()
+                # Throttle Y-axis autoscale — only update occasionally
+                self._rr_autoscale_counter = (self._rr_autoscale_counter + 1) % 10
+                if self._rr_autoscale_counter == 0:
+                    self.plot_ax.relim()
+                    self.plot_ax.autoscale_view(scalex=False, scaley=True)
+
+            # Non-blocking redraw
+            self.plot_canvas.draw_idle()
         except Exception:
             pass  # Silently ignore plot update errors
 
