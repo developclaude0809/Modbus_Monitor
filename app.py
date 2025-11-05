@@ -1637,7 +1637,8 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         self.btn_open_folder = QtWidgets.QPushButton("Open Folder")
         self.btn_open_folder.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:12px; padding:6px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         def _open_folder():
             try:
@@ -1653,7 +1654,8 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         self.btn_cancel.setStyleSheet(
             f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}}"
+            f"QPushButton:hover{{background:{Colors.BTN_DANGER_HOVER};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
         )
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)
@@ -1662,7 +1664,8 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         self.btn_apply.setStyleSheet(
             f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
         )
         self.btn_apply.clicked.connect(self._on_apply)
         btn_layout.addWidget(self.btn_apply)
@@ -1944,7 +1947,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Load button
         self.btnLoad = QtWidgets.QPushButton("Load")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}")
         self.btnLoad.clicked.connect(self.open_load_dialog)
         uart_layout.addWidget(self.btnLoad)
 
@@ -1953,14 +1956,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnRefreshPorts.setToolTip("Refresh COM ports")
         self.btnRefreshPorts.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnRefreshPorts.clicked.connect(self._refresh_ports)
         uart_layout.addWidget(self.btnRefreshPorts)
 
         # Connect button
         self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
         uart_layout.addWidget(self.btnConnect)
 
@@ -2005,7 +2009,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # RESPONSIVE: Use token-based font size
         self.btnMotorSend.setStyleSheet(
             f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
         )
         self.btnMotorSend.clicked.connect(self._send_motor_value)
         motor_layout.addWidget(self.btnMotorSend)
@@ -2018,7 +2023,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # RESPONSIVE: Use token-based font size
         self.btnMotorStop.setStyleSheet(
             f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
         )
         self.btnMotorStop.clicked.connect(self._stop_motor)
         motor_layout.addWidget(self.btnMotorStop)
@@ -2045,7 +2051,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Start/Stop Polling button
         self.btnPolling = QtWidgets.QPushButton("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self.btnPolling.clicked.connect(self._toggle_polling)
         topLayout.addWidget(self.btnPolling)
 
@@ -2249,7 +2255,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnNormal.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:3px 3px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
         rd_layout.addWidget(self.btnNormal, 0, 1)
@@ -2291,7 +2298,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnBypass.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
         rd_layout.addWidget(self.btnBypass, 1, 1)
@@ -2305,7 +2313,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnSwitch.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnSwitch.clicked.connect(self._send_switch_command)
         rd_layout.addWidget(self.btnSwitch, 1, 2)
@@ -2338,7 +2347,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnReset.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnReset.clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
         reset_layout.addWidget(self.btnReset)
@@ -2353,7 +2363,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnResetDef.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnResetDef.clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
         reset_layout.addWidget(self.btnResetDef)
@@ -2432,7 +2443,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnModeSwitch.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:700; font-size:16px; padding:8px 20px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnModeSwitch.setFixedHeight(35)
         self.btnModeSwitch.setFixedWidth(80)
@@ -2459,7 +2471,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnLoadDtbpt.setStyleSheet(
             f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
             f"font-weight:600; font-size:14px; padding:8px 16px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}"
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
         )
         self.btnLoadDtbpt.setFixedHeight(35)
         self.btnLoadDtbpt.clicked.connect(self._load_dtbpt_file)
@@ -2474,7 +2487,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Draw button
         self.btnDraw = QtWidgets.QPushButton("Draw")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         # Keep the button compact instead of stretching across the panel
         self.btnDraw.setFixedHeight(40)
         self.btnDraw.setFixedWidth(250)
@@ -2560,6 +2573,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Add channel toggle buttons to toolbar
         self._add_channel_toggle_buttons()
+
+        # Move Save button and add CSV button after channel toggles
+        self._reorder_save_buttons()
+        self._add_save_data_button()
 
         # Connect interactive zoom events after canvas creation
         self._connect_plot_events()
@@ -2769,6 +2786,135 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Redraw
         self.plot_canvas.draw_idle()
+
+    # ---------- Save Data ----------
+    def _reorder_save_buttons(self):
+        """Move Save (image) button to after channel toggles"""
+        # Find the Save action
+        existing_actions = self.plot_toolbar.actions()
+        save_action = None
+
+        for action in existing_actions:
+            if action.text() == 'Save':
+                save_action = action
+                break
+
+        if save_action:
+            # Remove Save action from its current position
+            self.plot_toolbar.removeAction(save_action)
+
+            # Insert before last action (coordinate display)
+            if existing_actions:
+                self.plot_toolbar.insertAction(existing_actions[-1], save_action)
+            else:
+                self.plot_toolbar.addAction(save_action)
+
+    def _add_save_data_button(self):
+        """Add Save Data button to toolbar"""
+        # Get all existing actions
+        existing_actions = self.plot_toolbar.actions()
+
+        # Create save data action
+        self._save_data_action = QtWidgets.QAction("CSV", self.plot_toolbar)
+        self._save_data_action.setCheckable(False)
+        self._save_data_action.setToolTip("Export plot data to CSV file")
+        self._save_data_action.triggered.connect(self._save_plot_data)
+
+        # Find the Save action and insert CSV button right after it
+        save_action_found = False
+        for i, action in enumerate(existing_actions):
+            if action.text() == 'Save':
+                # Insert after the Save action
+                if i + 1 < len(existing_actions):
+                    self.plot_toolbar.insertAction(existing_actions[i + 1], self._save_data_action)
+                else:
+                    self.plot_toolbar.addAction(self._save_data_action)
+                save_action_found = True
+                break
+
+        # Fallback: if Save button not found, insert before last action (coordinate display)
+        if not save_action_found:
+            if existing_actions:
+                self.plot_toolbar.insertAction(existing_actions[-1], self._save_data_action)
+            else:
+                self.plot_toolbar.addAction(self._save_data_action)
+
+        # Ensure the toolbar shows full text label with bold font
+        self._ensure_action_text_only(self._save_data_action)
+
+    def _save_plot_data(self):
+        """Save plot data to CSV file"""
+        try:
+            # Check if there's any data to save
+            has_data = False
+            for i in range(4):
+                if len(self.plot_data[i]['time']) > 0:
+                    has_data = True
+                    break
+
+            if not has_data:
+                QtWidgets.QMessageBox.warning(self, "No Data", "No plot data to save.")
+                return
+
+            # Open file dialog
+            file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                "Save Plot Data",
+                "",
+                "CSV Files (*.csv);;All Files (*)"
+            )
+
+            if not file_path:
+                return  # User canceled
+
+            # Ensure .csv extension
+            if not file_path.lower().endswith('.csv'):
+                file_path += '.csv'
+
+            # Determine maximum data length
+            max_len = max(len(self.plot_data[i]['time']) for i in range(4))
+
+            # Write CSV file
+            import csv
+            with open(file_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+
+                # Write header
+                header = ['Time (s)']
+                for i in range(4):
+                    if self.plot_active[i] and len(self.plot_data[i]['time']) > 0:
+                        header.append(f'CH{i+1}')
+                writer.writerow(header)
+
+                # Write data rows
+                for row_idx in range(max_len):
+                    row = []
+                    # Use time from first available channel
+                    time_written = False
+                    for i in range(4):
+                        if not time_written and row_idx < len(self.plot_data[i]['time']):
+                            row.append(f"{self.plot_data[i]['time'][row_idx]:.3f}")
+                            time_written = True
+
+                    if not time_written:
+                        row.append('')  # Empty time if no data
+
+                    # Write channel values
+                    for i in range(4):
+                        if self.plot_active[i] and len(self.plot_data[i]['time']) > 0:
+                            if row_idx < len(self.plot_data[i]['value']):
+                                row.append(str(self.plot_data[i]['value'][row_idx]))
+                            else:
+                                row.append('')  # Empty if no data for this channel
+
+                    writer.writerow(row)
+
+            QtWidgets.QMessageBox.information(self, "Success", f"Plot data saved to:\n{file_path}")
+            self._set_status(f"Plot data saved to {file_path}")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save plot data:\n{str(e)}")
+            self._set_status(f"Failed to save plot data: {e}")
 
     # ---------- Channel Visibility Toggle ----------
     def _add_channel_toggle_buttons(self):
@@ -3314,10 +3460,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Update UI for connection state"""
         if connected:
             self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
         else:
             self.btnConnect.setText("Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -3956,7 +4102,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.start()
 
             self.btnPolling.setText("End")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
+            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
             self._set_status("Polling started")
             # Query mode indicator after 200ms
             QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
@@ -3979,7 +4125,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"font-weight:600; font-size:14px;"
             )
         self.btnPolling.setText("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self._set_status("Polling stopped")
 
     @QtCore.pyqtSlot(int, object, object)
@@ -4259,7 +4405,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_worker.start()
 
             self.btnDraw.setText("Stop")
-            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
+            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
             self._set_status("Plotting started")
             # Query mode indicator after 200ms
             QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
@@ -4275,7 +4421,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_worker.wait(1500)
             self.plot_worker = None
         self.btnDraw.setText("Draw")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self._set_status("Plotting stopped")
 
     @QtCore.pyqtSlot(int, object, object)
@@ -4460,7 +4606,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rr_plot_timer.start()
 
             self.btnDraw.setText("Stop")
-            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}}")
+            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
             self._set_status(f"RR Mode plotting started (Page {self.rr_current_page})")
 
         except Exception as e:
@@ -4477,7 +4623,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rr_worker.wait(1500)
             self.rr_worker = None
         self.btnDraw.setText("Plot (RR)")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self._set_status("RR Mode stopped")
 
     @QtCore.pyqtSlot(int, tuple)
@@ -4542,7 +4688,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Handle RR Mode worker finished signal"""
         self.rr_worker = None
         self.btnDraw.setText("Plot (RR)")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}}")
+        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
 
     def _update_plot(self):
         """Redraw the plot with current data"""
@@ -4718,6 +4864,10 @@ def main():
         QPushButton:hover {{
             background-color: {Colors.AKAKUCHIBA};
             border-color: {Colors.BORDER_FOCUS};
+        }}
+        QPushButton:pressed {{
+            background-color: {Colors.BTN_PRIMARY_BG};
+            border-color: {Colors.BORDER_NORMAL};
         }}
 
         /* Header */
