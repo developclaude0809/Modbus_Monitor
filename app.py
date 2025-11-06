@@ -1451,17 +1451,17 @@ class DeviceInformationDialog(QtWidgets.QDialog):
         # Device info register definitions (addresses 24-34, 0x18-0x22)
         # Order: Speed Max, Speed Min, Speed Stop, Power, Duty Max, Duty Min, OC, OV, UV, OT
         self.device_registers = [
-            {"label": "Speed Max", "addr": 24, "scale": 1.0, "unit": "RPM"},
-            {"label": "Speed Min", "addr": 25, "scale": 1.0, "unit": "RPM"},
-            {"label": "Speed Stop", "addr": 26, "scale": 1.0, "unit": "RPM"},
-            {"label": "Power", "addr": 29, "scale": 1.0, "unit": "W"},
-            {"label": "Duty Max", "addr": 27, "scale": 0.1, "unit": "%"},
-            {"label": "Duty Min", "addr": 28, "scale": 0.1, "unit": "%"},
-            {"label": "OC", "addr": 30, "scale": 0.001, "unit": "A"},
-            {"label": "OV", "addr": 31, "scale": 1.0, "unit": "V"},
-            {"label": "UV", "addr": 32, "scale": 1.0, "unit": "V"},
+            {"label": "Speed Max", "addr": 24, "scale": 1.0, "unit": "RPM", "decimals": 0},
+            {"label": "Speed Min", "addr": 25, "scale": 1.0, "unit": "RPM", "decimals": 0},
+            {"label": "Speed Stop", "addr": 26, "scale": 1.0, "unit": "RPM", "decimals": 0},
+            {"label": "Power", "addr": 29, "scale": 1.0, "unit": "W", "decimals": 0},
+            {"label": "Duty Max", "addr": 27, "scale": 0.1, "unit": "%", "decimals": 1},
+            {"label": "Duty Min", "addr": 28, "scale": 0.1, "unit": "%", "decimals": 1},
+            {"label": "OC", "addr": 30, "scale": 0.01, "unit": "A", "decimals": 0},
+            {"label": "OV", "addr": 31, "scale": 1.0, "unit": "V", "decimals": 0},
+            {"label": "UV", "addr": 32, "scale": 1.0, "unit": "V", "decimals": 0},
             # Address 33 (SV) is skipped as per specification
-            {"label": "OT", "addr": 34, "scale": 0.1, "unit": "°C"},
+            {"label": "OT", "addr": 34, "scale": 0.1, "unit": "°C", "decimals": 0},
         ]
 
         # Store data labels for update
@@ -1644,7 +1644,8 @@ class DeviceInformationDialog(QtWidgets.QDialog):
                     idx = reg_map[addr]
                     reg = self.device_registers[idx]
                     scaled_value = raw_value * reg["scale"]
-                    self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
+                    decimals = reg["decimals"]
+                    self.data_labels[idx].setText(f"{scaled_value:.{decimals}f} {reg['unit']}")
 
         # ===== Request 3: Read device info part 2 (addresses 30-35, 6 registers) =====
         # Note: Address 33 (SV) and 35 are not used, but we read them for efficiency
@@ -1662,7 +1663,8 @@ class DeviceInformationDialog(QtWidgets.QDialog):
                     idx = reg_map[addr]
                     reg = self.device_registers[idx]
                     scaled_value = raw_value * reg["scale"]
-                    self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
+                    decimals = reg["decimals"]
+                    self.data_labels[idx].setText(f"{scaled_value:.{decimals}f} {reg['unit']}")
 
         # Update timestamp
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -3111,74 +3113,127 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ensure_action_text_only(self._save_data_action)
 
     def _save_plot_data(self):
-        """Save plot data to CSV file"""
+        """Auto-save plot data to CSV and PNG files with timestamp in ./log/ directory"""
         try:
+            # Check current mode and determine which data source to use
+            is_rr_mode = (self.current_mode == "RR")
+
             # Check if there's any data to save
             has_data = False
-            for i in range(4):
-                if len(self.plot_data[i]['time']) > 0:
-                    has_data = True
-                    break
+            if is_rr_mode:
+                # Check RR mode data
+                for i in range(4):
+                    if len(self.rr_data[i]['x']) > 0:
+                        has_data = True
+                        break
+            else:
+                # Check 03 mode data
+                for i in range(4):
+                    if len(self.plot_data[i]['time']) > 0:
+                        has_data = True
+                        break
 
             if not has_data:
                 QtWidgets.QMessageBox.warning(self, "No Data", "No plot data to save.")
                 return
 
-            # Open file dialog
-            file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self,
-                "Save Plot Data",
-                "",
-                "CSV Files (*.csv);;All Files (*)"
-            )
+            # Create log directory if it doesn't exist
+            import os
+            log_dir = "./log"
+            os.makedirs(log_dir, exist_ok=True)
 
-            if not file_path:
-                return  # User canceled
-
-            # Ensure .csv extension
-            if not file_path.lower().endswith('.csv'):
-                file_path += '.csv'
-
-            # Determine maximum data length
-            max_len = max(len(self.plot_data[i]['time']) for i in range(4))
+            # Generate filename with timestamp and mode
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            mode_suffix = "RR" if is_rr_mode else "03"
+            base_filename = f"{timestamp}_{mode_suffix}"
+            csv_file_path = os.path.join(log_dir, f"{base_filename}.csv")
+            png_file_path = os.path.join(log_dir, f"{base_filename}.png")
 
             # Write CSV file
             import csv
-            with open(file_path, 'w', newline='') as csvfile:
+            with open(csv_file_path, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
 
-                # Write header
-                header = ['Time (s)']
-                for i in range(4):
-                    if self.plot_active[i] and len(self.plot_data[i]['time']) > 0:
-                        header.append(f'CH{i+1}')
-                writer.writerow(header)
+                if is_rr_mode:
+                    # Save RR mode data
+                    # Determine maximum data length
+                    max_len = max(len(self.rr_data[i]['x']) for i in range(4))
 
-                # Write data rows
-                for row_idx in range(max_len):
-                    row = []
-                    # Use time from first available channel
-                    time_written = False
+                    # Write header
+                    header = ['Group Index']
                     for i in range(4):
-                        if not time_written and row_idx < len(self.plot_data[i]['time']):
-                            row.append(f"{self.plot_data[i]['time'][row_idx]:.3f}")
-                            time_written = True
+                        if self.plot_active[i] and len(self.rr_data[i]['x']) > 0:
+                            header.append(f'CH{i+1}')
+                    writer.writerow(header)
 
-                    if not time_written:
-                        row.append('')  # Empty time if no data
+                    # Write data rows
+                    for row_idx in range(max_len):
+                        row = []
+                        # Use group index from first available channel
+                        index_written = False
+                        for i in range(4):
+                            if not index_written and row_idx < len(self.rr_data[i]['x']):
+                                row.append(str(self.rr_data[i]['x'][row_idx]))
+                                index_written = True
 
-                    # Write channel values
+                        if not index_written:
+                            row.append('')  # Empty index if no data
+
+                        # Write channel values
+                        for i in range(4):
+                            if self.plot_active[i] and len(self.rr_data[i]['x']) > 0:
+                                if row_idx < len(self.rr_data[i]['y']):
+                                    row.append(str(self.rr_data[i]['y'][row_idx]))
+                                else:
+                                    row.append('')  # Empty if no data for this channel
+
+                        writer.writerow(row)
+                else:
+                    # Save 03 mode data
+                    # Determine maximum data length
+                    max_len = max(len(self.plot_data[i]['time']) for i in range(4))
+
+                    # Write header
+                    header = ['Time (s)']
                     for i in range(4):
                         if self.plot_active[i] and len(self.plot_data[i]['time']) > 0:
-                            if row_idx < len(self.plot_data[i]['value']):
-                                row.append(str(self.plot_data[i]['value'][row_idx]))
-                            else:
-                                row.append('')  # Empty if no data for this channel
+                            header.append(f'CH{i+1}')
+                    writer.writerow(header)
 
-                    writer.writerow(row)
+                    # Write data rows
+                    for row_idx in range(max_len):
+                        row = []
+                        # Use time from first available channel
+                        time_written = False
+                        for i in range(4):
+                            if not time_written and row_idx < len(self.plot_data[i]['time']):
+                                row.append(f"{self.plot_data[i]['time'][row_idx]:.3f}")
+                                time_written = True
 
-            QtWidgets.QMessageBox.information(self, "Success", f"Plot data saved to:\n{file_path}")
-            self._set_status(f"Plot data saved to {file_path}")
+                        if not time_written:
+                            row.append('')  # Empty time if no data
+
+                        # Write channel values
+                        for i in range(4):
+                            if self.plot_active[i] and len(self.plot_data[i]['time']) > 0:
+                                if row_idx < len(self.plot_data[i]['value']):
+                                    row.append(str(self.plot_data[i]['value'][row_idx]))
+                                else:
+                                    row.append('')  # Empty if no data for this channel
+
+                        writer.writerow(row)
+
+            # Save plot as PNG image
+            self.plot_fig.savefig(png_file_path, dpi=150, bbox_inches='tight')
+
+            mode_name = "RR Mode" if is_rr_mode else "03 Mode"
+            QtWidgets.QMessageBox.information(
+                self,
+                "Success",
+                f"{mode_name} data saved:\n\nCSV: {csv_file_path}\nPNG: {png_file_path}"
+            )
+            self._set_status(f"{mode_name} data saved to {log_dir}/")
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save plot data:\n{str(e)}")
