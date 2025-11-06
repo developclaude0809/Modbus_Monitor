@@ -1431,6 +1431,234 @@ def apply_control_sizes(root: QtWidgets.QWidget, tokens: UiTokens):
 
 
 # ==================== Load Settings Dialog ====================
+class DeviceInformationDialog(QtWidgets.QDialog):
+    """Non-modal dialog to display firmware version and device information"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Fan Information.")
+        self.setMinimumWidth(540)
+        self.setMinimumHeight(350)
+
+        # Make it non-modal and delete on close
+        self.setWindowModality(QtCore.Qt.NonModal)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+        # Firmware version registers (addresses 19-23, 0x13-0x17)
+        self.version_registers = [19, 20, 21, 22, 23]
+
+        # Device info register definitions (addresses 24-34, 0x18-0x22)
+        # Order: Speed Max, Speed Min, Speed Stop, Power, Duty Max, Duty Min, OC, OV, UV, OT
+        self.device_registers = [
+            {"label": "Speed Max", "addr": 24, "scale": 1.0, "unit": "RPM"},
+            {"label": "Speed Min", "addr": 25, "scale": 1.0, "unit": "RPM"},
+            {"label": "Speed Stop", "addr": 26, "scale": 1.0, "unit": "RPM"},
+            {"label": "Power", "addr": 29, "scale": 1.0, "unit": "W"},
+            {"label": "Duty Max", "addr": 27, "scale": 0.1, "unit": "%"},
+            {"label": "Duty Min", "addr": 28, "scale": 0.1, "unit": "%"},
+            {"label": "OC", "addr": 30, "scale": 0.001, "unit": "A"},
+            {"label": "OV", "addr": 31, "scale": 1.0, "unit": "V"},
+            {"label": "UV", "addr": 32, "scale": 1.0, "unit": "V"},
+            # Address 33 (SV) is skipped as per specification
+            {"label": "OT", "addr": 34, "scale": 0.1, "unit": "°C"},
+        ]
+
+        # Store data labels for update
+        self.data_labels = []
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build dialog UI"""
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        # Title
+        title = QtWidgets.QLabel("Fan Information.")
+        title.setFixedHeight(35)
+        title.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        title.setStyleSheet(f"font-size:20px; font-weight:700; color:{Colors.TEXT_PRIMARY}; border:none;")
+        layout.addWidget(title)
+
+        # Firmware Version and Last Update in same row
+        version_row = QtWidgets.QHBoxLayout()
+        self.lbl_firmware = QtWidgets.QLabel("Firmware Version : ----/----/--")
+        self.lbl_firmware.setFixedHeight(30)
+        self.lbl_firmware.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.lbl_firmware.setStyleSheet(f"font-size:14px; font-weight:600; color:{Colors.TEXT_PRIMARY}; border:none;")
+        version_row.addWidget(self.lbl_firmware)
+
+        version_row.addStretch()
+
+        self.lbl_last_update = QtWidgets.QLabel("Last update: Never")
+        self.lbl_last_update.setFixedHeight(30)
+        self.lbl_last_update.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.lbl_last_update.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-size:11px; border:none;")
+        version_row.addWidget(self.lbl_last_update)
+
+        layout.addLayout(version_row)
+
+        # Data display frame (similar to 04 input register display)
+        # Calculate height: margins(3+3) + 5_rows(35*5) + 4_gaps(2*4) = 189px
+        data_frame = QtWidgets.QFrame()
+        data_frame.setFixedHeight(189)
+        data_frame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
+
+        # Create grid layout (2 columns for compact display)
+        data_grid = QtWidgets.QGridLayout(data_frame)
+        data_grid.setContentsMargins(3, 3, 3, 3)
+        data_grid.setHorizontalSpacing(8)
+        data_grid.setVerticalSpacing(2)
+
+        # Create label pairs for each register (2 columns layout)
+        self.data_labels = []
+        for i, reg in enumerate(self.device_registers):
+            row = i // 2  # 2 items per row
+            col = i % 2
+
+            # Create horizontal container for label + value
+            container = QtWidgets.QWidget()
+            container.setFixedHeight(35)
+            hbox = QtWidgets.QHBoxLayout(container)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)
+
+            # Label name (left side)
+            label_name = QtWidgets.QLabel(reg['label'])
+            label_name.setFixedWidth(100)
+            label_name.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            label_name.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
+            hbox.addWidget(label_name)
+
+            # Value display (styled like 04 input registers)
+            label_data = QtWidgets.QLabel("----")
+            label_data.setAlignment(QtCore.Qt.AlignCenter)
+            label_data.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:4px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:16px;"
+            )
+            hbox.addWidget(label_data)
+
+            # Store reference to data label for updates
+            self.data_labels.append(label_data)
+
+            # Add to grid
+            data_grid.addWidget(container, row, col)
+
+        layout.addWidget(data_frame)
+
+        # Button layout
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+
+        # Refresh button
+        self.btn_refresh = QtWidgets.QPushButton("Refresh")
+        self.btn_refresh.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+        )
+        self.btn_refresh.clicked.connect(self._refresh_data)
+        btn_layout.addWidget(self.btn_refresh)
+
+        # Close button
+        self.btn_close = QtWidgets.QPushButton("Close")
+        self.btn_close.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btn_close.clicked.connect(self.close)
+        btn_layout.addWidget(self.btn_close)
+
+        layout.addLayout(btn_layout)
+
+        # Set dialog background
+        self.setStyleSheet(f"QDialog{{background:{Colors.BG_PANEL};}}")
+
+    def _refresh_data(self):
+        """Read firmware version and device information from Modbus"""
+        if not self.parent_window:
+            QtWidgets.QMessageBox.warning(self, "Error", "Parent window not available")
+            return
+
+        # Check if connected
+        if not hasattr(self.parent_window, 'ser') or not self.parent_window.ser or not self.parent_window.ser.is_open:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a device first")
+            return
+
+        # Get slave ID from parent
+        try:
+            slave_id = int(self.parent_window.edSlave.text())
+        except:
+            slave_id = 1
+
+        # Read firmware version (addresses 19-23)
+        version_chars = []
+        for addr in self.version_registers:
+            try:
+                req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
+                self.parent_window.ser.write(req)
+                time.sleep(0.01)
+                response = self.parent_window.ser.read(256)
+
+                if len(response) >= 7:
+                    # Each register contains 2 ASCII characters (high byte, low byte)
+                    high_byte = response[3]
+                    low_byte = response[4]
+                    # Convert to ASCII characters
+                    char1 = chr(high_byte) if 32 <= high_byte <= 126 else '?'
+                    char2 = chr(low_byte) if 32 <= low_byte <= 126 else '?'
+                    version_chars.append(char1 + char2)
+                else:
+                    version_chars.append('??')
+            except:
+                version_chars.append('??')
+
+        # Format version string: ABCD-1234-22 (insert '-' after positions 4 and 8)
+        if len(version_chars) == 5:
+            version_str = ''.join(version_chars)
+            formatted_version = f"{version_str[0:4]}-{version_str[4:8]}-{version_str[8:10]}"
+            self.lbl_firmware.setText(f"Firmware Version : {formatted_version}")
+        else:
+            self.lbl_firmware.setText("Firmware Version : ----/----/--")
+
+        # Read device information registers (addresses 24-34)
+        for idx, reg in enumerate(self.device_registers):
+            try:
+                # Build Modbus read request for this register
+                req = ModbusRTU.read_holding_registers(slave_id, reg["addr"], 1)
+
+                # Send request
+                self.parent_window.ser.write(req)
+                time.sleep(0.01)  # Small delay between requests
+
+                # Read response
+                response = self.parent_window.ser.read(256)
+
+                if len(response) >= 7:
+                    # Parse response: [slave_id, func_code, byte_count, data_high, data_low, crc_low, crc_high]
+                    raw_value = (response[3] << 8) | response[4]
+                    scaled_value = raw_value * reg["scale"]
+
+                    # Update data label
+                    self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
+                else:
+                    self.data_labels[idx].setText(f"- {reg['unit']}")
+
+            except:
+                self.data_labels[idx].setText(f"- {reg['unit']}")
+
+        # Update timestamp
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.lbl_last_update.setText(f"Last update: {now}")
+
+
 class LoadSettingsDialog(QtWidgets.QDialog):
     """Dialog to select 03 and 04 definition files"""
 
@@ -1974,60 +2202,90 @@ class MainWindow(QtWidgets.QMainWindow):
         motor_panel = QtWidgets.QFrame()
         motor_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
         motor_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # RESPONSIVE: Use tokens for minimum size instead of fixed values
-        motor_panel.setMinimumSize(self.tokens.panel_minw(), self.tokens.panel_h_control())
+        # Calculate required height: top_pad + input(40) + spacing(8) + button(40) + bottom_pad
+        # Assuming pad() returns ~10-14px, total height = 10 + 40 + 8 + 40 + 10 = 108px minimum
+        motor_panel.setMinimumSize(self.tokens.panel_minw(), 108)
+        motor_panel.setMaximumHeight(108)
         motor_panel.setMaximumWidth(650)
-        # RESPONSIVE: Allow vertical expansion if needed
-        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # Fixed height to prevent expansion
+        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
 
-        motor_layout = QtWidgets.QHBoxLayout(motor_panel)
-        # RESPONSIVE: Use token-based margins and spacing
-        motor_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
-        motor_layout.setSpacing(self.tokens.gap())
+        motor_main_layout = QtWidgets.QVBoxLayout(motor_panel)
+        # RESPONSIVE: Use token-based margins and spacing - reduced for compactness
+        motor_main_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
+        motor_main_layout.setSpacing(8)  # Spacing between rows
+
+        # Top row: input box and buttons
+        motor_top_layout = QtWidgets.QHBoxLayout()
+        motor_top_layout.setSpacing(self.tokens.gap())
 
         # Value input for motor control
         self.edMotorValue = QtWidgets.QLineEdit()
         self.edMotorValue.setText("0")
         self.edMotorValue.setValidator(QtGui.QIntValidator(0, 65535, self))
-        # RESPONSIVE: Use token-based height instead of fixed, allow width to expand
-        self.edMotorValue.setMinimumHeight(self.tokens.input_h_large())
-        self.edMotorValue.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        # Reduced height for compactness
+        self.edMotorValue.setMinimumHeight(40)
+        self.edMotorValue.setMaximumHeight(40)
+        self.edMotorValue.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         # RESPONSIVE: Use token-based font size
         self.edMotorValue.setStyleSheet(
             f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; "
-            f"border:2px solid {Colors.BORDER_NORMAL}; padding:6px; border-radius:4px; font-size:{self.tokens.font_large()}px; font-weight:700;}} "
+            f"border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px; font-size:{self.tokens.font_large()}px; font-weight:700;}} "
             f"QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}"
         )
         self.edMotorValue.returnPressed.connect(self._send_motor_value)
-        motor_layout.addWidget(self.edMotorValue)
+        motor_top_layout.addWidget(self.edMotorValue)
 
         # Send button (success style)
         self.btnMotorSend = QtWidgets.QPushButton("Send")
-        # RESPONSIVE: Use token-based minimum sizes instead of fixed, allow expansion
-        self.btnMotorSend.setMinimumSize(self.tokens.btn_w(), self.tokens.btn_h_large())
-        self.btnMotorSend.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # Reduced size for compactness
+        self.btnMotorSend.setMinimumSize(self.tokens.btn_w(), 40)
+        self.btnMotorSend.setMaximumHeight(40)
+        self.btnMotorSend.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         # RESPONSIVE: Use token-based font size
         self.btnMotorSend.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
             f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
         )
         self.btnMotorSend.clicked.connect(self._send_motor_value)
-        motor_layout.addWidget(self.btnMotorSend)
+        motor_top_layout.addWidget(self.btnMotorSend)
 
         # Stop button (danger style)
         self.btnMotorStop = QtWidgets.QPushButton("Stop")
-        # RESPONSIVE: Use token-based minimum sizes instead of fixed, allow expansion
-        self.btnMotorStop.setMinimumSize(self.tokens.btn_w(), self.tokens.btn_h_large())
-        self.btnMotorStop.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        # Reduced size for compactness
+        self.btnMotorStop.setMinimumSize(self.tokens.btn_w(), 40)
+        self.btnMotorStop.setMaximumHeight(40)
+        self.btnMotorStop.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         # RESPONSIVE: Use token-based font size
         self.btnMotorStop.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:8px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
             f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
             f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
         )
         self.btnMotorStop.clicked.connect(self._stop_motor)
-        motor_layout.addWidget(self.btnMotorStop)
+        motor_top_layout.addWidget(self.btnMotorStop)
+
+        motor_main_layout.addLayout(motor_top_layout)
+
+        # Bottom row: Fan Info button
+        motor_bottom_layout = QtWidgets.QHBoxLayout()
+        motor_bottom_layout.setSpacing(self.tokens.gap())
+
+        # Fan Info button
+        self.btnFanInfo = QtWidgets.QPushButton("Fan Info.")
+        self.btnFanInfo.setMinimumHeight(40)
+        self.btnFanInfo.setMaximumHeight(40)
+        self.btnFanInfo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.btnFanInfo.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
+        motor_bottom_layout.addWidget(self.btnFanInfo)
+
+        motor_main_layout.addLayout(motor_bottom_layout)
 
         # ========== Read Addresses Panel ==========
         RWpanel = QtWidgets.QFrame()
@@ -3734,6 +3992,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # Public alias requested
     def open_load_dialog(self):
         self._load_definitions_dialog()
+
+    def open_device_info_dialog(self):
+        """Open the Device Information dialog (non-modal)"""
+        try:
+            dialog = DeviceInformationDialog(self)
+            dialog.show()
+        except Exception as e:
+            self._set_status(f"Error opening Device Information: {str(e)}")
 
     def _apply_load_settings(self, file_03: str, file_04_dict: dict):
         """Apply selected definition files (filenames, resolved under ./setting)."""
