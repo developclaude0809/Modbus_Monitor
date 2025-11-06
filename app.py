@@ -1598,27 +1598,27 @@ class DeviceInformationDialog(QtWidgets.QDialog):
         except:
             slave_id = 1
 
-        # Read firmware version (addresses 19-23)
+        # ===== Request 1: Read firmware version (addresses 19-23, 5 registers) =====
         version_chars = []
-        for addr in self.version_registers:
-            try:
-                req = ModbusRTU.read_holding_registers(slave_id, addr, 1)
-                self.parent_window.ser.write(req)
-                time.sleep(0.01)
-                response = self.parent_window.ser.read(256)
+        try:
+            req = ModbusRTU.read_holding_registers(slave_id, 19, 5)
+            self.parent_window.ser.write(req)
+            time.sleep(0.02)
+            response = self.parent_window.ser.read(256)
 
-                if len(response) >= 7:
-                    # Each register contains 2 ASCII characters (high byte, low byte)
-                    high_byte = response[3]
-                    low_byte = response[4]
+            if len(response) >= 15:  # 3 (header) + 10 (data) + 2 (crc) = 15 bytes
+                # Parse 5 registers starting from byte 3
+                for i in range(5):
+                    high_byte = response[3 + i*2]
+                    low_byte = response[4 + i*2]
                     # Convert to ASCII characters
                     char1 = chr(high_byte) if 32 <= high_byte <= 126 else '?'
                     char2 = chr(low_byte) if 32 <= low_byte <= 126 else '?'
                     version_chars.append(char1 + char2)
-                else:
-                    version_chars.append('??')
-            except:
-                version_chars.append('??')
+            else:
+                version_chars = ['??'] * 5
+        except:
+            version_chars = ['??'] * 5
 
         # Format version string: ABCD-1234-22 (insert '-' after positions 4 and 8)
         if len(version_chars) == 5:
@@ -1628,31 +1628,54 @@ class DeviceInformationDialog(QtWidgets.QDialog):
         else:
             self.lbl_firmware.setText("Firmware Version : ----/----/--")
 
-        # Read device information registers (addresses 24-34)
-        for idx, reg in enumerate(self.device_registers):
-            try:
-                # Build Modbus read request for this register
-                req = ModbusRTU.read_holding_registers(slave_id, reg["addr"], 1)
+        # ===== Request 2: Read device info part 1 (addresses 24-29, 6 registers) =====
+        try:
+            req = ModbusRTU.read_holding_registers(slave_id, 24, 6)
+            self.parent_window.ser.write(req)
+            time.sleep(0.02)
+            response = self.parent_window.ser.read(256)
 
-                # Send request
-                self.parent_window.ser.write(req)
-                time.sleep(0.01)  # Small delay between requests
+            if len(response) >= 15:  # 3 (header) + 12 (data) + 2 (crc) = 17 bytes
+                # Parse registers: 24-29 (Speed Max, Speed Min, Speed Stop, Duty Max, Duty Min, Power)
+                # Map to device_registers indices: 0, 1, 2, 4, 5, 3
+                reg_map = {24: 0, 25: 1, 26: 2, 27: 4, 28: 5, 29: 3}
 
-                # Read response
-                response = self.parent_window.ser.read(256)
+                for i in range(6):
+                    addr = 24 + i
+                    raw_value = (response[3 + i*2] << 8) | response[4 + i*2]
 
-                if len(response) >= 7:
-                    # Parse response: [slave_id, func_code, byte_count, data_high, data_low, crc_low, crc_high]
-                    raw_value = (response[3] << 8) | response[4]
-                    scaled_value = raw_value * reg["scale"]
+                    if addr in reg_map:
+                        idx = reg_map[addr]
+                        reg = self.device_registers[idx]
+                        scaled_value = raw_value * reg["scale"]
+                        self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
+        except:
+            pass
 
-                    # Update data label
-                    self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
-                else:
-                    self.data_labels[idx].setText(f"- {reg['unit']}")
+        # ===== Request 3: Read device info part 2 (addresses 30-35, 6 registers) =====
+        # Note: Address 33 (SV) is not used, but we read it anyway for efficiency
+        try:
+            req = ModbusRTU.read_holding_registers(slave_id, 30, 6)
+            self.parent_window.ser.write(req)
+            time.sleep(0.02)
+            response = self.parent_window.ser.read(256)
 
-            except:
-                self.data_labels[idx].setText(f"- {reg['unit']}")
+            if len(response) >= 15:  # 3 (header) + 12 (data) + 2 (crc) = 17 bytes
+                # Parse registers: 30-35 (OC, OV, UV, SV-skip, OT, unused-35)
+                # Map to device_registers indices: 6, 7, 8, skip, 9, skip
+                reg_map = {30: 6, 31: 7, 32: 8, 34: 9}  # Skip 33 and 35
+
+                for i in range(6):
+                    addr = 30 + i
+                    raw_value = (response[3 + i*2] << 8) | response[4 + i*2]
+
+                    if addr in reg_map:
+                        idx = reg_map[addr]
+                        reg = self.device_registers[idx]
+                        scaled_value = raw_value * reg["scale"]
+                        self.data_labels[idx].setText(f"{scaled_value:.3f} {reg['unit']}")
+        except:
+            pass
 
         # Update timestamp
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
