@@ -2540,11 +2540,18 @@ class MainWindow(QtWidgets.QMainWindow):
         # Load default RR title file
         self._load_default_rr_titles()
 
+        # 03 Memory Auto-save timer (silent, stateless)
+        self._03_autosave_timer = QtCore.QTimer(self)
+        self._03_autosave_timer.setSingleShot(True)  # Only fire once per trigger
+        self._03_autosave_timer.setInterval(500)  # 500ms debounce
+        self._03_autosave_timer.timeout.connect(self._save_03_memory_addresses)
+
         self._build_ui()
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
         # Note: _auto_load_definitions() already loads 04 defs from dmem, no need to call _load_input_defs()
         self._update_input_titles()  # Update UI labels with custom titles
+        self._load_03_memory_addresses()  # Load saved 03 addresses silently
         self._refresh_ports()
 
     # ---------- UI Build ----------
@@ -2845,6 +2852,10 @@ class MainWindow(QtWidgets.QMainWindow):
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
             grid.addWidget(edit, r, 2)
             self.rowEdits.append(edit)
+
+        # Connect 10 register combo boxes to autosave (silent)
+        for combo in self.rowCombos:
+            combo.currentIndexChanged.connect(self._trigger_03_autosave)
 
         rv.addWidget(gridWidget)
 
@@ -4157,6 +4168,152 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass  # Keep default mode on any error
 
+    # ---------- 03 Memory Auto-save (Silent Mode) ----------
+    def _load_03_memory_addresses(self):
+        """Load saved 03 addresses from ./setting/03memory_setting.dmem silently.
+
+        - No status messages, no error dialogs
+        - Create file with defaults if not found
+        - Auto-clamp values to valid range
+        - Set combo box selections based on saved addresses (10 registers in 03 mode)
+        """
+        try:
+            memory_file = Path('./setting/03memory_setting.dmem')
+
+            # Create directory if needed
+            memory_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Check if combos have items loaded
+            if not hasattr(self, 'rowCombos') or not self.rowCombos:
+                return  # Combos not created yet
+
+            # Check if first combo has items (meaning definitions are loaded)
+            if len(self.rowCombos) > 0 and self.rowCombos[0].count() == 0:
+                return  # Definitions not loaded yet, skip
+
+            # Read saved addresses
+            saved_addresses = []
+            if memory_file.exists():
+                with open(memory_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        try:
+                            addr = int(line)
+                            # Clamp to valid range (0 to 9999)
+                            addr = max(0, min(9999, addr))
+                            saved_addresses.append(addr)
+                        except:
+                            pass
+
+            # If no file or not enough addresses, fill with defaults (0)
+            while len(saved_addresses) < 10:
+                saved_addresses.append(0)
+
+            # Temporarily disconnect signals to prevent autosave during load
+            for combo in self.rowCombos:
+                try:
+                    combo.currentIndexChanged.disconnect(self._trigger_03_autosave)
+                except:
+                    pass
+
+            # Apply to 10 register combo boxes (rowCombos)
+            for i in range(10):
+                if i < len(self.rowCombos):
+                    addr = saved_addresses[i]
+
+                    # Find item that starts with this address
+                    target_prefix = f"{addr:03d}_"
+                    found = False
+                    for idx in range(self.rowCombos[i].count()):
+                        item_text = self.rowCombos[i].itemText(idx)
+                        if item_text.startswith(target_prefix):
+                            # Enable programmatic setCurrentIndex for SearchableCombo
+                            self.rowCombos[i]._allow_commit = True
+                            self.rowCombos[i].setCurrentIndex(idx)
+                            self.rowCombos[i]._allow_commit = False
+                            found = True
+                            break
+
+                    # If not found, try to set to first item that contains the address
+                    if not found:
+                        for idx in range(self.rowCombos[i].count()):
+                            item_text = self.rowCombos[i].itemText(idx)
+                            if item_text.startswith(f"{addr:03d}"):
+                                # Enable programmatic setCurrentIndex for SearchableCombo
+                                self.rowCombos[i]._allow_commit = True
+                                self.rowCombos[i].setCurrentIndex(idx)
+                                self.rowCombos[i]._allow_commit = False
+                                found = True
+                                break
+
+                    # If still not found, leave unset (don't default to 0)
+                    # This prevents overwriting user's dmem file with wrong values
+                    if not found:
+                        if self.rowCombos[i].count() > 0:
+                            # Set to index 0 only if saved address was 0
+                            if addr == 0:
+                                # Enable programmatic setCurrentIndex for SearchableCombo
+                                self.rowCombos[i]._allow_commit = True
+                                self.rowCombos[i].setCurrentIndex(0)
+                                self.rowCombos[i]._allow_commit = False
+
+            # Reconnect signals after load
+            for combo in self.rowCombos:
+                try:
+                    combo.currentIndexChanged.connect(self._trigger_03_autosave)
+                except:
+                    pass
+
+        except Exception:
+            pass  # Silent mode - no error messages
+
+    def _trigger_03_autosave(self):
+        """Trigger delayed autosave (500ms debounce).
+
+        - Resets timer on each call (debounce)
+        - Silent operation
+        """
+        try:
+            self._03_autosave_timer.stop()
+            self._03_autosave_timer.start()
+        except Exception:
+            pass  # Silent mode
+
+    def _save_03_memory_addresses(self):
+        """Save current 03 addresses to ./setting/03memory_setting.dmem silently.
+
+        - No status messages, no error dialogs
+        - Direct overwrite, no backup
+        - Extract address from combo box selection (10 registers in 03 mode)
+        """
+        try:
+            memory_file = Path('./setting/03memory_setting.dmem')
+            memory_file.parent.mkdir(parents=True, exist_ok=True)
+
+            addresses = []
+            for combo in self.rowCombos:
+                item_text = combo.currentText()
+                if item_text and item_text != "---":
+                    # Extract address from "000_name" format
+                    try:
+                        addr = int(item_text.split('_')[0])
+                        addr = max(0, min(9999, addr))  # Clamp to valid range
+                        addresses.append(addr)
+                    except:
+                        addresses.append(0)
+                else:
+                    addresses.append(0)
+
+            # Write to file
+            with open(memory_file, 'w', encoding='utf-8') as f:
+                for addr in addresses:
+                    f.write(f"{addr}\n")
+
+        except Exception:
+            pass  # Silent mode - no error messages
+
     def _update_window_size_display(self):
         """Update status bar to show current window size"""
         width = self.width()
@@ -4665,12 +4822,25 @@ class MainWindow(QtWidgets.QMainWindow):
                     # No underscore, use line number as address
                     self.addr_items.append(f"{i:03d}_{line}")
 
+            # Temporarily disconnect autosave signals to prevent unwanted saves
+            for combo in self.rowCombos:
+                try:
+                    combo.currentIndexChanged.disconnect(self._trigger_03_autosave)
+                except:
+                    pass
+
             # Update all combo boxes (monitor rows and plot channels)
             for combo in self.rowCombos:
                 combo.clear()
                 combo.addItems(self.addr_items)
-                if self.addr_items:
-                    combo.setCurrentIndex(0)
+                # Don't set index here - let _load_03_memory_addresses() handle it later
+
+            # Reconnect autosave signals after populating combos
+            for combo in self.rowCombos:
+                try:
+                    combo.currentIndexChanged.connect(self._trigger_03_autosave)
+                except:
+                    pass
 
             # Update plot combo boxes
             for combo in self.plotCombos:
