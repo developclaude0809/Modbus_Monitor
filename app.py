@@ -3279,7 +3279,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
                 # Find the Home action in the toolbar
                 for action in self.plot_toolbar.actions():
-                    if action.text() == 'Home':
+                    action_text = action.text().replace('&', '')  # Remove mnemonic
+                    if action_text == 'Home':
                         # Disconnect default behavior
                         try:
                             action.triggered.disconnect()
@@ -3287,6 +3288,24 @@ class MainWindow(QtWidgets.QMainWindow):
                             pass  # No connections to disconnect
                         # Connect our custom behavior
                         action.triggered.connect(self._on_home_clicked)
+                        break
+        except Exception:
+            pass
+
+        # Override Save button to auto-save to log folder
+        try:
+            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                # Find the Save action in the toolbar
+                for action in self.plot_toolbar.actions():
+                    action_text = action.text().replace('&', '')  # Remove mnemonic
+                    if action_text == 'Save':
+                        # Disconnect default behavior
+                        try:
+                            action.triggered.disconnect()
+                        except TypeError:
+                            pass  # No connections to disconnect
+                        # Connect our custom auto-save behavior
+                        action.triggered.connect(self._auto_save_plot_to_log)
                         break
         except Exception:
             pass
@@ -3680,7 +3699,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         writer.writerow(row)
 
             # Save plot as PNG image
-            self.plot_fig.savefig(png_file_path, dpi=150, bbox_inches='tight')
+            self.plot_figure.savefig(png_file_path, dpi=150, bbox_inches='tight')
 
             mode_name = "RR Mode" if is_rr_mode else "03 Mode"
             QtWidgets.QMessageBox.information(
@@ -5665,6 +5684,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_canvas.draw()
         except Exception as e:
             pass  # Silently ignore plot update errors
+
+    def _auto_save_plot_to_log(self):
+        """Auto-save plot image to ./log/ folder with timestamp"""
+        try:
+            # Check if there's any data to save
+            has_data = False
+            for i in range(4):
+                if len(self.plot_data[i]['time']) > 0:
+                    has_data = True
+                    break
+
+            if not has_data:
+                QtWidgets.QMessageBox.warning(self, "No Data", "No plot data to save.")
+                return
+
+            # Create log directory if it doesn't exist
+            import os
+            log_dir = "./log"
+            os.makedirs(log_dir, exist_ok=True)
+
+            # Generate filename with timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            png_file_path = os.path.join(log_dir, f"plot_{timestamp}.png")
+
+            # Save plot as PNG image
+            self.plot_figure.savefig(png_file_path, dpi=150, bbox_inches='tight')
+
+            QtWidgets.QMessageBox.information(
+                self,
+                "Success",
+                f"Plot image saved:\n\n{png_file_path}"
+            )
+            self._set_status(f"Plot saved to {log_dir}/")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save plot image:\n{str(e)}")
+            self._set_status(f"Failed to save plot: {e}")
 
     # FIXED: Override Home button to auto-fit current data instead of restoring original view
     def _on_home_clicked(self):
