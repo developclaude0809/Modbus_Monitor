@@ -1797,6 +1797,17 @@ class AlarmLogDialog(QtWidgets.QDialog):
         self.btn_refresh.clicked.connect(self._refresh_data)
         btn_layout.addWidget(self.btn_refresh)
 
+        # Save button
+        self.btn_save = QtWidgets.QPushButton("Save")
+        self.btn_save.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btn_save.clicked.connect(self._save_alarm_log)
+        btn_layout.addWidget(self.btn_save)
+
         # Close button
         self.btn_close = QtWidgets.QPushButton("Close")
         self.btn_close.setStyleSheet(
@@ -2004,6 +2015,61 @@ class AlarmLogDialog(QtWidgets.QDialog):
                         active_statuses.append(bit_name)
 
         return ", ".join(active_statuses) if active_statuses else "Normal"
+
+    def _save_alarm_log(self):
+        """Save alarm log data to CSV file"""
+        try:
+            from datetime import datetime
+            from pathlib import Path
+            import csv
+
+            # Create log directory if it doesn't exist
+            log_dir = Path("./log")
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"AlarmLog_{timestamp}.csv"
+            filepath = log_dir / filename
+
+            # Prepare CSV data
+            with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+
+                # Write header row
+                header = ["Alarm#"] + [field["name"] for field in self.alarm_fields]
+                writer.writerow(header)
+
+                # Write data rows
+                for alarm_idx in range(20):
+                    alarm_num = alarm_idx + 1
+                    widgets = self.alarm_data_widgets[alarm_idx]
+
+                    # Extract text from each widget
+                    row = [f"{alarm_num:02d}"]
+                    for widget in widgets:
+                        text = widget.text()
+                        row.append(text)
+
+                    writer.writerow(row)
+
+            # Show success message
+            QtWidgets.QMessageBox.information(
+                self,
+                "Save Successful",
+                f"Alarm log saved to:\n{filepath}"
+            )
+
+            # Update status in parent if available
+            if self.parent_window and hasattr(self.parent_window, '_set_status'):
+                self.parent_window._set_status(f"Alarm log saved: {filename}")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Save Error",
+                f"Failed to save alarm log:\n{str(e)}"
+            )
 
 
 class LoadSettingsDialog(QtWidgets.QDialog):
