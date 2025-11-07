@@ -253,6 +253,7 @@ class LoadMemory:
     file_04: dict = field(default_factory=lambda: {
         "Normal": "", "Bypass": "", "Inverter": "", "Converter": "", "Gsensor": ""
     })
+    file_alarm: str = ""  # Alarm definition file
 
     @classmethod
     def load(cls, path: Path = Path("./setting/LoadSettings.dmem")) -> "LoadMemory":
@@ -274,7 +275,8 @@ class LoadMemory:
                     "Inverter": _nz(data.get("file_04_inverter", "")),
                     "Converter": _nz(data.get("file_04_converter", "")),
                     "Gsensor": _nz(data.get("file_04_gsensor", ""))
-                }
+                },
+                file_alarm=_nz(data.get("file_alarm", ""))
             )
         except Exception:
             return cls()
@@ -283,7 +285,8 @@ class LoadMemory:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "file_03": self.file_03,
-            **{f"file_04_{k.lower()}": v for k, v in self.file_04.items()}
+            **{f"file_04_{k.lower()}": v for k, v in self.file_04.items()},
+            "file_alarm": self.file_alarm
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -1437,7 +1440,7 @@ class DeviceInformationDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.setWindowTitle("Fan Information.")
+        self.setWindowTitle("Fan Information")
         self.setMinimumWidth(540)
         self.setMinimumHeight(350)
 
@@ -1476,7 +1479,7 @@ class DeviceInformationDialog(QtWidgets.QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
 
         # Title
-        title = QtWidgets.QLabel("Fan Information.")
+        title = QtWidgets.QLabel("Fan Information")
         title.setFixedHeight(35)
         title.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         title.setStyleSheet(f"font-size:20px; font-weight:700; color:{Colors.TEXT_PRIMARY}; border:none;")
@@ -1671,6 +1674,338 @@ class DeviceInformationDialog(QtWidgets.QDialog):
         self.lbl_last_update.setText(f"Last update: {now}")
 
 
+class AlarmLogDialog(QtWidgets.QDialog):
+    """Non-modal dialog to display Alarm Log (Alarm_01 to Alarm_20)"""
+
+    def __init__(self, parent=None, alarm_def_file: str = ""):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Alarm Log")
+
+        # Make it non-modal and delete on close
+        self.setWindowModality(QtCore.Qt.NonModal)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+        # Determine which alarm definition file to use
+        self.alarm_def_file = alarm_def_file
+        if not self.alarm_def_file:
+            # Try to get from parent's load memory
+            if hasattr(parent, 'load_mem') and parent.load_mem.file_alarm:
+                self.alarm_def_file = f"./setting/{parent.load_mem.file_alarm}"
+            else:
+                # Default to __alarm_def_Default.ddata
+                self.alarm_def_file = "./setting/__alarm_def_Default.ddata"
+
+        # Parse Alarm definition file
+        self.alarm_fields = self._parse_alarm_definition()
+
+        # Store data labels for update (20 alarms × N display fields each)
+        self.alarm_data_widgets = []
+
+        self._build_ui()
+
+    def _parse_alarm_definition(self):
+        """Parse alarm definition .ddata file to get field definitions"""
+        fields = []
+        try:
+            with open(self.alarm_def_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) >= 4:
+                        field_name = parts[0]
+                        field_format = parts[1]
+                        ratio = float(parts[2]) if parts[2] else 1.0
+                        show_info = parts[3] if len(parts) > 3 else ""
+
+                        fields.append({
+                            "name": field_name,
+                            "format": field_format,
+                            "ratio": ratio,
+                            "show": show_info
+                        })
+        except Exception as e:
+            print(f"Error parsing alarm definition file {self.alarm_def_file}: {e}")
+            # Fallback to minimal default
+            fields = [
+                {"name": "Status", "format": "bitstatus", "ratio": 1, "show": "1/0"},
+                {"name": "Value", "format": "value", "ratio": 1, "show": "uint16"}
+            ]
+
+        return fields
+
+    def _build_ui(self):
+        """Build the dialog UI"""
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(2, 5, 2, 5)
+        layout.setSpacing(2)
+
+        # Calculate dynamic window width based on number of fields
+        num_fields = len(self.alarm_fields)
+        base_width = 60  # Width for alarm number column
+        field_width = 85  # Width per field column
+        total_width = base_width + (field_width * num_fields) + 50  # +50 for margins/spacing
+        self.setMinimumWidth(min(total_width, 1200))  # Cap at 1200px
+
+        # Calculate dynamic window height (header + 20 alarms)
+        header_height = 28
+        row_height = 32
+        total_height = header_height + (row_height * 20) + 100  # +100 for buttons/margins
+        self.setMinimumHeight(min(total_height, 900))  # Cap at 900px
+
+        # Main content frame (no scroll, fixed grid like 04 read)
+        content_frame = QtWidgets.QFrame()
+        content_frame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:none;}}")
+
+        content_layout = QtWidgets.QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(3, 3, 3, 3)
+        content_layout.setSpacing(2)
+
+        # Layout for header + 20 alarms (1 column × 21 rows total)
+        alarm_layout = QtWidgets.QVBoxLayout()
+        alarm_layout.setContentsMargins(0, 0, 0, 0)
+        alarm_layout.setSpacing(2)
+
+        # Add header row first
+        header_widget = self._create_header_row()
+        alarm_layout.addWidget(header_widget)
+
+        # Add 20 alarm data rows
+        for alarm_idx in range(20):
+            alarm_num = alarm_idx + 1
+            alarm_widget = self._create_alarm_row(alarm_num)
+            alarm_layout.addWidget(alarm_widget)
+
+        content_layout.addLayout(alarm_layout)
+        layout.addWidget(content_frame)
+
+        # Buttons
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        # Refresh button
+        self.btn_refresh = QtWidgets.QPushButton("Refresh")
+        self.btn_refresh.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+        )
+        self.btn_refresh.clicked.connect(self._refresh_data)
+        btn_layout.addWidget(self.btn_refresh)
+
+        # Close button
+        self.btn_close = QtWidgets.QPushButton("Close")
+        self.btn_close.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btn_close.clicked.connect(self.close)
+        btn_layout.addWidget(self.btn_close)
+
+        layout.addLayout(btn_layout)
+
+        # Set dialog background
+        self.setStyleSheet(f"QDialog{{background:{Colors.BG_PANEL};}}")
+
+    def _create_header_row(self):
+        """Create table header row dynamically based on field definitions"""
+        container = QtWidgets.QWidget()
+        container.setFixedHeight(28)
+        row_layout = QtWidgets.QHBoxLayout(container)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
+
+        # Alarm number column
+        num_label = QtWidgets.QLabel("##")
+        num_label.setStyleSheet(
+            f"color:{Colors.TEXT_PRIMARY}; font-size:12px; font-weight:700; "
+            f"background:{Colors.ROW_NUMBER_BG}; padding:4px; border-radius:4px;"
+        )
+        num_label.setAlignment(QtCore.Qt.AlignCenter)
+        num_label.setFixedWidth(40)
+        row_layout.addWidget(num_label)
+
+        # Dynamic field headers
+        for field in self.alarm_fields:
+            label = QtWidgets.QLabel(field["name"])
+            label.setStyleSheet(
+                f"color:{Colors.TEXT_PRIMARY}; font-size:12px; font-weight:700; "
+                f"background:{Colors.ROW_NUMBER_BG}; padding:4px; border-radius:4px;"
+            )
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            # Status/bitstatus fields get more width
+            if field["format"] == "bitstatus":
+                label.setFixedWidth(200)
+            else:
+                label.setFixedWidth(85)
+            row_layout.addWidget(label)
+
+        return container
+
+    def _create_alarm_row(self, alarm_num):
+        """Create a single alarm data row dynamically based on field definitions"""
+        container = QtWidgets.QWidget()
+        container.setFixedHeight(32)
+        row_layout = QtWidgets.QHBoxLayout(container)
+        row_layout.setContentsMargins(0, 2, 0, 2)
+        row_layout.setSpacing(4)
+
+        # Alarm number (##)
+        num_label = QtWidgets.QLabel(f"{alarm_num:02d}")
+        num_label.setStyleSheet(
+            f"color:{Colors.ROW_NUMBER_TEXT}; background:{Colors.ROW_NUMBER_BG}; "
+            f"font-size:12px; font-weight:600; padding:4px; border-radius:4px;"
+        )
+        num_label.setAlignment(QtCore.Qt.AlignCenter)
+        num_label.setFixedWidth(40)
+        row_layout.addWidget(num_label)
+
+        # Dynamic data fields based on alarm_fields
+        data_labels = []
+        for field in self.alarm_fields:
+            data_label = QtWidgets.QLabel("---")
+            data_label.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; "
+                f"font-size:11px;"
+            )
+            data_label.setAlignment(QtCore.Qt.AlignCenter)
+            # Status/bitstatus fields get more width
+            if field["format"] == "bitstatus":
+                data_label.setFixedWidth(200)
+            else:
+                data_label.setFixedWidth(85)
+            row_layout.addWidget(data_label)
+            data_labels.append(data_label)
+
+        # Store references as list (indexed by field order)
+        self.alarm_data_widgets.append(data_labels)
+
+        return container
+
+    def showEvent(self, event):
+        """Override showEvent to auto-refresh data when dialog opens"""
+        super().showEvent(event)
+        # Delay the refresh slightly to ensure dialog is fully shown
+        QtCore.QTimer.singleShot(100, self._refresh_data)
+
+    def _refresh_data(self):
+        """Read all 20 alarm logs from Modbus"""
+        if not self.parent_window:
+            QtWidgets.QMessageBox.warning(self, "Error", "Parent window not available")
+            return
+
+        # Check if serial manager is connected
+        if not hasattr(self.parent_window, 'serial_mgr') or not self.parent_window.serial_mgr.connected:
+            QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a device first")
+            return
+
+        # Get slave ID from parent
+        try:
+            slave_id = int(self.parent_window.edSlave.text())
+        except:
+            slave_id = 1
+
+        # Read all 20 alarms (addresses 115~254)
+        # Each alarm has N registers (determined by definition file), starting at address 115
+        num_regs = len(self.alarm_fields)  # Number of registers per alarm
+        for alarm_idx in range(20):
+            start_addr = 115 + (alarm_idx * num_regs)  # 115, 115+N, 115+2N, ...
+
+            # Read N registers for this alarm (based on number of fields)
+            req = ModbusRTU.read_holding_registers(slave_id, start_addr, num_regs)
+            ok, result = self.parent_window.serial_mgr.transact(req, slave_id, 0x03, timeout=0.5)
+
+            if ok and isinstance(result, list) and len(result) == num_regs:
+                self._update_alarm_display(alarm_idx, result)
+            else:
+                # Clear display on error
+                self._clear_alarm_display(alarm_idx)
+
+    def _update_alarm_display(self, alarm_idx, data):
+        """Update display for a single alarm dynamically based on field definitions"""
+        widgets = self.alarm_data_widgets[alarm_idx]
+
+        # Process each field according to its definition
+        for field_idx, field in enumerate(self.alarm_fields):
+            if field_idx >= len(data) or field_idx >= len(widgets):
+                continue
+
+            raw_value = data[field_idx]
+            widget = widgets[field_idx]
+            field_format = field["format"]
+            ratio = field["ratio"]
+            show = field["show"]
+
+            try:
+                if field_format == "bitstatus":
+                    # Parse bitstatus
+                    text = self._parse_bitstatus(raw_value, show)
+                    widget.setText(text)
+                    widget.setStyleSheet(
+                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                        f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+                    )
+                elif field_format == "value":
+                    # Parse value with ratio
+                    scaled_value = raw_value * ratio
+
+                    # Determine decimal places based on ratio
+                    if ratio < 0.01:  # 0.001, etc. -> 3 decimals
+                        text = f"{scaled_value:.3f}"
+                    elif ratio < 0.1:  # 0.01, etc. -> 2 decimals
+                        text = f"{scaled_value:.2f}"
+                    elif ratio < 1:  # 0.1, etc. -> 1 decimal
+                        text = f"{scaled_value:.1f}"
+                    else:  # 1 or more -> integer
+                        text = f"{int(scaled_value)}"
+
+                    widget.setText(text)
+                    widget.setStyleSheet(
+                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                        f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+                    )
+                else:
+                    widget.setText(f"{raw_value}")
+            except Exception as e:
+                widget.setText("ERR")
+                print(f"Error updating field {field['name']}: {e}")
+
+    def _clear_alarm_display(self, alarm_idx):
+        """Clear display for a single alarm (show dashes)"""
+        widgets = self.alarm_data_widgets[alarm_idx]
+        for widget in widgets:
+            widget.setText("---")
+            widget.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+            )
+            widget.setToolTip("")
+
+    def _parse_bitstatus(self, status_raw, bit_labels_str):
+        """Parse bitstatus field to readable text"""
+        if status_raw == 0:
+            return "Normal"
+
+        # Parse bit labels from show field (pipe-separated)
+        bit_names = bit_labels_str.split('|') if bit_labels_str else []
+
+        active_statuses = []
+        for bit_idx, bit_name in enumerate(bit_names):
+            if bit_idx < 16:  # Max 16 bits
+                if status_raw & (1 << bit_idx):
+                    if bit_name and bit_name.upper() not in ("RESERVE", "RESERVED", ""):
+                        active_statuses.append(bit_name)
+
+        return ", ".join(active_statuses) if active_statuses else "Normal"
+
+
 class LoadSettingsDialog(QtWidgets.QDialog):
     """Dialog to select 03 and 04 definition files"""
 
@@ -1678,7 +2013,7 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Load Definition Files")
         self.setMinimumWidth(600)
-        self.setMinimumHeight(500)  # Increased height for 5 dropdowns
+        self.setMinimumHeight(550)  # Increased height for 6 dropdowns + alarm
 
         # Unified memory for saved selections
         self.load_mem = LoadMemory.load()
@@ -1691,6 +2026,8 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         self.files_04_inverter = []
         self.files_04_converter = []
         self.files_04_gsensor = []
+        # Alarm definition files
+        self.files_alarm = []
         self._scan_ddata_files()
 
         # Build UI
@@ -1710,13 +2047,14 @@ class LoadSettingsDialog(QtWidgets.QDialog):
             # Sort once by filename for a consistent user experience
             all_files.sort(key=lambda x: Path(x).name.lower())
 
-            # Use the same full list for every selector (03 and all 04 modes)
+            # Use the same full list for every selector (03, all 04 modes, and alarm)
             self.files_03 = list(all_files)
             self.files_04_normal = list(all_files)
             self.files_04_bypass = list(all_files)
             self.files_04_inverter = list(all_files)
             self.files_04_converter = list(all_files)
             self.files_04_gsensor = list(all_files)
+            self.files_alarm = list(all_files)
 
         except Exception:
             pass
@@ -1858,6 +2196,19 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         self.combo_04_gsensor.setStyleSheet(combo_style)
         form.addRow(lbl_04_gsensor, self.combo_04_gsensor)
 
+        # Alarm Definition
+        lbl_alarm = QtWidgets.QLabel("Alarm Definition")
+        lbl_alarm.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-weight:600; font-size:14px; border:none;")
+        lbl_alarm.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.combo_alarm = SearchableCombo()
+        self.combo_alarm.setMinimumWidth(300)
+        self.combo_alarm.addItem("(Not set)", None)
+        for file in self.files_alarm:
+            display_name = Path(file).stem  # Remove .ddata extension
+            self.combo_alarm.addItem(display_name, file)
+        self.combo_alarm.setStyleSheet(combo_style)
+        form.addRow(lbl_alarm, self.combo_alarm)
+
         layout.addLayout(form)
 
         # Spacer
@@ -1954,6 +2305,7 @@ class LoadSettingsDialog(QtWidgets.QDialog):
             set_combo_by_filename(self.combo_04_inverter, mem.file_04.get("Inverter", ""))
             set_combo_by_filename(self.combo_04_converter, mem.file_04.get("Converter", ""))
             set_combo_by_filename(self.combo_04_gsensor, mem.file_04.get("Gsensor", ""))
+            set_combo_by_filename(self.combo_alarm, mem.file_alarm)
         except Exception:
             pass
 
@@ -1974,8 +2326,14 @@ class LoadSettingsDialog(QtWidgets.QDialog):
                 "Gsensor": Path(self.combo_04_gsensor.currentData()).name if self.combo_04_gsensor.currentIndex() != 0 and self.combo_04_gsensor.currentData() else "",
             }
 
+            file_alarm = ""
+            if self.combo_alarm.currentIndex() != 0:
+                sel = self.combo_alarm.currentData()
+                file_alarm = Path(sel).name if sel else ""
+
             self.load_mem.file_03 = file_03
             self.load_mem.file_04 = file_04
+            self.load_mem.file_alarm = file_alarm
             self.load_mem.save()
         except Exception:
             pass
@@ -2018,6 +2376,13 @@ class LoadSettingsDialog(QtWidgets.QDialog):
             result["Gsensor"] = ""
 
         return result
+
+    def get_selected_alarm_file(self):
+        """Get selected alarm definition filename (not full path)."""
+        if self.combo_alarm.currentIndex() == 0:
+            return ""
+        data = self.combo_alarm.currentData()
+        return Path(data).name if data else ""
 
 
 # ==================== Main Window ====================
@@ -2280,7 +2645,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         motor_main_layout.addLayout(motor_top_layout)
 
-        # Bottom row: Fan Info button
+        # Bottom row: Fan Info and Alarm Log buttons
         motor_bottom_layout = QtWidgets.QHBoxLayout()
         motor_bottom_layout.setSpacing(self.tokens.gap())
 
@@ -2296,6 +2661,19 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
         motor_bottom_layout.addWidget(self.btnFanInfo)
+
+        # Alarm Log button
+        self.btnAlarmLog = QtWidgets.QPushButton("Alarm Log")
+        self.btnAlarmLog.setMinimumHeight(40)
+        self.btnAlarmLog.setMaximumHeight(40)
+        self.btnAlarmLog.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.btnAlarmLog.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btnAlarmLog.clicked.connect(self.open_alarm_log_dialog)
+        motor_bottom_layout.addWidget(self.btnAlarmLog)
 
         motor_main_layout.addLayout(motor_bottom_layout)
 
@@ -4037,20 +4415,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self.inputRegLabels[i].setText(self.input_defs[i].title)
 
     def _load_definitions_dialog(self):
-        """Show custom dialog to select 03 and 04 definition files"""
+        """Show custom dialog to select 03, 04, and alarm definition files"""
         dialog = LoadSettingsDialog(self)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             # Get selected filenames (not full paths)
             file_03 = dialog.get_selected_03_file()
             file_04_dict = dialog.get_selected_04_files()
+            file_alarm = dialog.get_selected_alarm_file()
 
             # Update unified memory and persist
             self.load_mem.file_03 = file_03
             self.load_mem.file_04 = dict(file_04_dict)
+            self.load_mem.file_alarm = file_alarm
             self.load_mem.save()
 
             # Apply the selections
             self._apply_load_settings(file_03, file_04_dict)
+
+            # Status message for alarm definition
+            if file_alarm:
+                self._set_status(f"Alarm definition loaded: {file_alarm}")
 
             # No message box after apply per request; rely on status bar updates
 
@@ -4065,6 +4449,14 @@ class MainWindow(QtWidgets.QMainWindow):
             dialog.show()
         except Exception as e:
             self._set_status(f"Error opening Device Information: {str(e)}")
+
+    def open_alarm_log_dialog(self):
+        """Open the Alarm Log dialog (non-modal)"""
+        try:
+            dialog = AlarmLogDialog(self)
+            dialog.show()
+        except Exception as e:
+            self._set_status(f"Error opening Alarm Log: {str(e)}")
 
     def _apply_load_settings(self, file_03: str, file_04_dict: dict):
         """Apply selected definition files (filenames, resolved under ./setting)."""

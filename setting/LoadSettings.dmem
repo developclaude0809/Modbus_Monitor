@@ -4,5 +4,6 @@
   "file_04_bypass": "__address_04def_Bypass.ddata",
   "file_04_inverter": "__address_04def_Inverter.ddata",
   "file_04_converter": "__address_04def_Converter.ddata",
-  "file_04_gsensor": "__address_04def_Gsensor.ddata"
+  "file_04_gsensor": "__address_04def_Gsensor.ddata",
+  "file_alarm": "__alarm_def_Default.ddata"
 }

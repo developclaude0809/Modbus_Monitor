@@ -1,0 +1,7 @@
+Status,bitstatus,1,OV|UV|OC|OT|FAN_FAIL|TEMP_HIGH|COMM_ERR|POWER_FAIL|PHASE_LOSS|OVERLOAD|CURR_IMB|VOLT_IMB|SENSOR_ERR|BRAKE_ERR|EEPROM_ERR|RESERVE
+I,value,0.001,uint16
+V,value,1,uint16
+Temp,value,0.1,uint16
+Hr,value,1,uint16
+Min,value,1,uint16
+Sec,value,1,uint16
