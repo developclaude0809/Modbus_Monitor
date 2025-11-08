@@ -2546,6 +2546,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Load default RR title file
         self._load_default_rr_titles()
 
+        # Dialog references for non-modal windows
+        self.dlg_alarm_log = None
+        self.dlg_device_info = None
+
         # 03 Memory Auto-save timer (silent, stateless)
         self._03_autosave_timer = QtCore.QTimer(self)
         self._03_autosave_timer.setSingleShot(True)  # Only fire once per trigger
@@ -4689,7 +4693,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_device_info_dialog(self):
         """Open the Device Information dialog (non-modal)"""
         try:
-            dialog = DeviceInformationDialog(self)
+            # If dialog already exists and is visible, bring it to front
+            if self.dlg_device_info is not None and self.dlg_device_info.isVisible():
+                self.dlg_device_info.showNormal()
+                self.dlg_device_info.raise_()
+                self.dlg_device_info.activateWindow()
+                return
+
+            # Create new dialog without parent to make it independent
+            dialog = DeviceInformationDialog(None)
+            dialog.setModal(False)
+            dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+            # Store reference and clear it when dialog is destroyed
+            self.dlg_device_info = dialog
+            dialog.destroyed.connect(lambda: setattr(self, 'dlg_device_info', None))
+
             dialog.show()
         except Exception as e:
             self._set_status(f"Error opening Device Information: {str(e)}")
@@ -4697,7 +4716,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_alarm_log_dialog(self):
         """Open the Alarm Log dialog (non-modal)"""
         try:
-            dialog = AlarmLogDialog(self)
+            # If dialog already exists and is visible, bring it to front
+            if self.dlg_alarm_log is not None and self.dlg_alarm_log.isVisible():
+                self.dlg_alarm_log.showNormal()
+                self.dlg_alarm_log.raise_()
+                self.dlg_alarm_log.activateWindow()
+                return
+
+            # Create new dialog without parent to make it independent
+            dialog = AlarmLogDialog(None)
+            dialog.setModal(False)
+            dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+            # Store reference and clear it when dialog is destroyed
+            self.dlg_alarm_log = dialog
+            dialog.destroyed.connect(lambda: setattr(self, 'dlg_alarm_log', None))
+
             dialog.show()
         except Exception as e:
             self._set_status(f"Error opening Alarm Log: {str(e)}")
