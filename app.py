@@ -114,7 +114,7 @@ class Colors:
     STATUS_SUCCESS     = MINT_GLOW
     STATUS_NORMAL      = SOFT_YELLOW
 
-    ROW_NUMBER_BG      = DEEP_BLUE
+    ROW_NUMBER_BG      = COOL_GRAY
     ROW_NUMBER_TEXT    = CREAM_TINT
 
     VALUE_DISPLAY_BG   = COOL_GRAY
@@ -1835,8 +1835,9 @@ class AlarmLogDialog(QtWidgets.QDialog):
         # Alarm number column
         num_label = QtWidgets.QLabel("##")
         num_label.setStyleSheet(
-            f"color:{Colors.TEXT_PRIMARY}; font-size:12px; font-weight:700; "
-            f"background:{Colors.ROW_NUMBER_BG}; padding:4px; border-radius:4px;"
+            f"color:{Colors.TEXT_PRIMARY}; font-size:14px; font-weight:900; "
+            f"background:{Colors.ROW_NUMBER_BG}; padding:1px; border-radius:1px; "
+            f"border:2px solid {Colors.BORDER_NORMAL};"
         )
         num_label.setAlignment(QtCore.Qt.AlignCenter)
         num_label.setFixedWidth(40)
@@ -1846,8 +1847,9 @@ class AlarmLogDialog(QtWidgets.QDialog):
         for field in self.alarm_fields:
             label = QtWidgets.QLabel(field["name"])
             label.setStyleSheet(
-                f"color:{Colors.TEXT_PRIMARY}; font-size:12px; font-weight:700; "
-                f"background:{Colors.ROW_NUMBER_BG}; padding:4px; border-radius:4px;"
+                f"color:{Colors.TEXT_PRIMARY}; font-size:14px; font-weight:900; "
+                f"background:{Colors.ROW_NUMBER_BG}; padding:1px; border-radius:1px; "
+                f"border:2px solid {Colors.BORDER_NORMAL};"
             )
             label.setAlignment(QtCore.Qt.AlignCenter)
             # Status/bitstatus fields get more width
@@ -1867,11 +1869,15 @@ class AlarmLogDialog(QtWidgets.QDialog):
         row_layout.setContentsMargins(0, 2, 0, 2)
         row_layout.setSpacing(4)
 
+        # Determine border color based on even/odd row
+        border_color = Colors.BORDER_NORMAL if alarm_num % 2 == 0 else Colors.AKAKUCHIBA
+
         # Alarm number (##)
         num_label = QtWidgets.QLabel(f"{alarm_num:02d}")
         num_label.setStyleSheet(
             f"color:{Colors.ROW_NUMBER_TEXT}; background:{Colors.ROW_NUMBER_BG}; "
-            f"font-size:12px; font-weight:600; padding:4px; border-radius:4px;"
+            f"font-size:14px; font-weight:900; padding:1px; border-radius:1px; "
+            f"border:2px solid {border_color};"
         )
         num_label.setAlignment(QtCore.Qt.AlignCenter)
         num_label.setFixedWidth(40)
@@ -1883,7 +1889,7 @@ class AlarmLogDialog(QtWidgets.QDialog):
             data_label = QtWidgets.QLabel("---")
             data_label.setStyleSheet(
                 f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; "
+                f"padding:4px; border:2px solid {border_color}; border-radius:1px; "
                 f"font-size:11px;"
             )
             data_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -3587,7 +3593,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ensure_action_text_only(self._save_data_action)
 
     def _save_plot_data(self):
-        """Auto-save plot data to CSV and PNG files with timestamp in ./log/ directory"""
+        """Auto-save plot data to CSV file with timestamp in ./log/ directory"""
         try:
             # Check current mode and determine which data source to use
             is_rr_mode = (self.current_mode == "RR")
@@ -3622,7 +3628,6 @@ class MainWindow(QtWidgets.QMainWindow):
             mode_suffix = "RR" if is_rr_mode else "03"
             base_filename = f"{timestamp}_{mode_suffix}"
             csv_file_path = os.path.join(log_dir, f"{base_filename}.csv")
-            png_file_path = os.path.join(log_dir, f"{base_filename}.png")
 
             # Write CSV file
             import csv
@@ -3698,16 +3703,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
                         writer.writerow(row)
 
-            # Save plot as PNG image
-            self.plot_figure.savefig(png_file_path, dpi=150, bbox_inches='tight')
-
             mode_name = "RR Mode" if is_rr_mode else "03 Mode"
             QtWidgets.QMessageBox.information(
                 self,
                 "Success",
-                f"{mode_name} data saved:\n\nCSV: {csv_file_path}\nPNG: {png_file_path}"
+                f"{mode_name} CSV data saved:\n\n{csv_file_path}"
             )
-            self._set_status(f"{mode_name} data saved to {log_dir}/")
+            self._set_status(f"{mode_name} CSV saved to {log_dir}/")
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save plot data:\n{str(e)}")
