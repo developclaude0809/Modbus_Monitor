@@ -3302,7 +3302,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-        # Override Save button to auto-save to log folder
+        # Override Save button to auto-save to log folder and change text to PNG
+        self._png_save_action = None
         try:
             if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
                 # Find the Save action in the toolbar
@@ -3316,6 +3317,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             pass  # No connections to disconnect
                         # Connect our custom auto-save behavior
                         action.triggered.connect(self._auto_save_plot_to_log)
+                        # Change button text to "PNG"
+                        action.setText("PNG")
+                        action.setToolTip("Export plot data to PNG file")
+                        # Store reference for later styling
+                        self._png_save_action = action
                         break
         except Exception:
             pass
@@ -3331,6 +3337,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Move Save button and add CSV button after channel toggles
         self._reorder_save_buttons()
         self._add_save_data_button()
+
+        # Apply text-only style to PNG button
+        if self._png_save_action is not None:
+            self._ensure_action_text_only(self._png_save_action)
 
         # Connect interactive zoom events after canvas creation
         self._connect_plot_events()
