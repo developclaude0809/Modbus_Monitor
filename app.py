@@ -2457,6 +2457,214 @@ class LoadSettingsDialog(QtWidgets.QDialog):
         return Path(data).name if data else ""
 
 
+# ==================== Axis Limits Dialog ====================
+class AxisLimitsDialog(QtWidgets.QDialog):
+    """Dialog to set custom axis limits for the plot"""
+
+    def __init__(self, parent_window=None):
+        super().__init__(None)  # No Qt parent - makes it independent
+        self.setWindowTitle("Axis Limits")
+        self.setMinimumWidth(100)
+        self.parent_window = parent_window
+
+        # Store references to current values
+        self.x_min_input = None
+        self.x_max_input = None
+        self.y_min_input = None
+        self.y_max_input = None
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build the dialog UI"""
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        # Title label
+        title = QtWidgets.QLabel("Set Plot Axis Limits")
+        title.setStyleSheet(f"color:{Colors.TEXT_PRIMARY}; font-size:17px; font-weight:bold; border:none;")
+        layout.addWidget(title)
+
+        # Create form layout for inputs
+        form_layout = QtWidgets.QFormLayout()
+        form_layout.setSpacing(5)
+        form_layout.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        # Double validator for numeric input
+        double_validator = QtGui.QDoubleValidator()
+        double_validator.setNotation(QtGui.QDoubleValidator.StandardNotation)
+
+        # X-axis limits
+        x_label = QtWidgets.QLabel("X-Axis:")
+        x_label.setStyleSheet(f"color:{Colors.SOFT_YELLOW}; font-weight:bold; font-size:15px; border:none;")
+        empty_label1 = QtWidgets.QLabel("")
+        empty_label1.setStyleSheet("border:none;")
+        form_layout.addRow(x_label, empty_label1)
+
+        self.x_min_input = QtWidgets.QLineEdit()
+        self.x_min_input.setValidator(double_validator)
+        self.x_min_input.setPlaceholderText("(empty = auto)")
+        self.x_min_input.setStyleSheet(f"""
+            QLineEdit {{
+                background:{Colors.BG_INPUT};
+                color:{Colors.TEXT_PRIMARY};
+                border:1px solid {Colors.BORDER_NORMAL};
+                border-radius:3px;
+                padding:5px;
+            }}
+            QLineEdit:focus {{
+                border:1px solid {Colors.BORDER_FOCUS};
+            }}
+        """)
+        self.x_min_input.returnPressed.connect(self._on_apply)
+        form_layout.addRow("  Min:", self.x_min_input)
+
+        self.x_max_input = QtWidgets.QLineEdit()
+        self.x_max_input.setValidator(double_validator)
+        self.x_max_input.setPlaceholderText("(empty = auto)")
+        self.x_max_input.setStyleSheet(self.x_min_input.styleSheet())
+        self.x_max_input.returnPressed.connect(self._on_apply)
+        form_layout.addRow("  Max:", self.x_max_input)
+
+        # Y-axis limits
+        y_label = QtWidgets.QLabel("Y-Axis:")
+        y_label.setStyleSheet(f"color:{Colors.SOFT_YELLOW}; font-weight:bold; font-size:15px; border:none;")
+        empty_label2 = QtWidgets.QLabel("")
+        empty_label2.setStyleSheet("border:none;")
+        form_layout.addRow(y_label, empty_label2)
+
+        self.y_min_input = QtWidgets.QLineEdit()
+        self.y_min_input.setValidator(double_validator)
+        self.y_min_input.setPlaceholderText("(empty = auto)")
+        self.y_min_input.setStyleSheet(self.x_min_input.styleSheet())
+        self.y_min_input.returnPressed.connect(self._on_apply)
+        form_layout.addRow("  Min:", self.y_min_input)
+
+        self.y_max_input = QtWidgets.QLineEdit()
+        self.y_max_input.setValidator(double_validator)
+        self.y_max_input.setPlaceholderText("(empty = auto)")
+        self.y_max_input.setStyleSheet(self.x_min_input.styleSheet())
+        self.y_max_input.returnPressed.connect(self._on_apply)
+        form_layout.addRow("  Max:", self.y_max_input)
+
+        layout.addLayout(form_layout)
+
+        # Apply button
+        apply_btn = QtWidgets.QPushButton("Apply")
+        apply_btn.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+        )
+        apply_btn.clicked.connect(self._on_apply)
+        layout.addWidget(apply_btn)
+
+        # Cancel button
+        cancel_btn = QtWidgets.QPushButton("Close")
+        cancel_btn.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
+        )
+        cancel_btn.clicked.connect(self.close)
+        layout.addWidget(cancel_btn)
+
+        # Set dialog background and ensure all labels have no borders
+        self.setStyleSheet(f"""
+            QDialog {{ background:{Colors.BG_PANEL}; }}
+            QLabel {{ border:none; }}
+        """)
+
+    def set_current_limits(self, xlim, ylim):
+        """Prefill the dialog with current/last limits"""
+        if xlim is not None:
+            self.x_min_input.setText(f"{xlim[0]:.3f}")
+            self.x_max_input.setText(f"{xlim[1]:.3f}")
+        if ylim is not None:
+            self.y_min_input.setText(f"{ylim[0]:.3f}")
+            self.y_max_input.setText(f"{ylim[1]:.3f}")
+
+    def _on_apply(self):
+        """Apply the entered limits"""
+        if self.parent_window is None:
+            return
+
+        try:
+            # Parse inputs (empty = None)
+            x_min = float(self.x_min_input.text()) if self.x_min_input.text().strip() else None
+            x_max = float(self.x_max_input.text()) if self.x_max_input.text().strip() else None
+            y_min = float(self.y_min_input.text()) if self.y_min_input.text().strip() else None
+            y_max = float(self.y_max_input.text()) if self.y_max_input.text().strip() else None
+
+            # Validate: X min cannot be negative
+            if x_min is not None and x_min < 0:
+                QtWidgets.QMessageBox.warning(self, "Invalid Value", "X min cannot be negative")
+                return
+
+            # Validate: if both provided, min < max
+            if x_min is not None and x_max is not None and x_min >= x_max:
+                QtWidgets.QMessageBox.warning(self, "Invalid Range", "X min must be less than X max")
+                return
+            if y_min is not None and y_max is not None and y_min >= y_max:
+                QtWidgets.QMessageBox.warning(self, "Invalid Range", "Y min must be less than Y max")
+                return
+
+            # Apply limits via parent window
+            self.parent_window._apply_axis_limits(x_min, x_max, y_min, y_max)
+
+        except ValueError:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values")
+
+    def _on_auto(self):
+        """Auto-scale both axes"""
+        if self.parent_window is None:
+            return
+
+        try:
+            self.parent_window.plot_ax.relim()
+            self.parent_window.plot_ax.autoscale_view()
+            self.parent_window.plot_canvas.draw_idle()
+            self.parent_window._set_status("Axes auto-scaled")
+
+            # Clear the input fields
+            self.x_min_input.clear()
+            self.x_max_input.clear()
+            self.y_min_input.clear()
+            self.y_max_input.clear()
+
+            # Clear stored limits
+            self.parent_window._last_xlim = None
+            self.parent_window._last_ylim = None
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to auto-scale: {e}")
+
+    def _on_reset(self):
+        """Reset fields to last applied values"""
+        if self.parent_window is None:
+            return
+
+        xlim = self.parent_window._last_xlim
+        ylim = self.parent_window._last_ylim
+
+        if xlim is not None:
+            self.x_min_input.setText(str(xlim[0]))
+            self.x_max_input.setText(str(xlim[1]))
+        else:
+            self.x_min_input.clear()
+            self.x_max_input.clear()
+
+        if ylim is not None:
+            self.y_min_input.setText(str(ylim[0]))
+            self.y_max_input.setText(str(ylim[1]))
+        else:
+            self.y_min_input.clear()
+            self.y_max_input.clear()
+
+
 # ==================== Main Window ====================
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window"""
@@ -2549,6 +2757,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Dialog references for non-modal windows
         self.dlg_alarm_log = None
         self.dlg_device_info = None
+        self.dlg_axis_limits = None
+
+        # Axis limits state (for remembering last applied values)
+        self._last_xlim = None
+        self._last_ylim = None
 
         # 03 Memory Auto-save timer (silent, stateless)
         self._03_autosave_timer = QtCore.QTimer(self)
@@ -3331,6 +3544,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Add probe tool button to toolbar
         self._add_probe_button()
 
+        # Add X-Y axis limits button to toolbar
+        self._add_axis_limits_button()
+
         # Add channel toggle buttons to toolbar
         self._add_channel_toggle_buttons()
 
@@ -3550,6 +3766,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Redraw
         self.plot_canvas.draw_idle()
+
+    # ---------- Axis Limits Button ----------
+    def _add_axis_limits_button(self):
+        """Add X-Y axis limits button to toolbar"""
+        # Insert before the last action (coordinate display)
+        existing_actions = self.plot_toolbar.actions()
+
+        # Create axis limits action with keyboard shortcut
+        self._axis_limits_action = QtWidgets.QAction("X-Y", self.plot_toolbar)
+        self._axis_limits_action.setCheckable(False)
+        self._axis_limits_action.setToolTip("Set custom X-Y axis limits (Press A)")
+        self._axis_limits_action.setShortcut(QtGui.QKeySequence("A"))
+        self._axis_limits_action.triggered.connect(self.open_axis_limits_dialog)
+
+        # Insert before last action (coordinate display)
+        if existing_actions:
+            self.plot_toolbar.insertAction(existing_actions[-1], self._axis_limits_action)
+        else:
+            self.plot_toolbar.addAction(self._axis_limits_action)
+
+        # Ensure the toolbar shows full text label with bold font
+        self._ensure_action_text_only(self._axis_limits_action)
 
     # ---------- Save Data ----------
     def _reorder_save_buttons(self):
@@ -4746,6 +4984,73 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self._set_status(f"Error opening Alarm Log: {str(e)}")
 
+    def open_axis_limits_dialog(self):
+        """Open the Axis Limits dialog (non-modal)"""
+        try:
+            # If dialog already exists and is visible, bring it to front
+            if self.dlg_axis_limits is not None and self.dlg_axis_limits.isVisible():
+                self.dlg_axis_limits.showNormal()
+                self.dlg_axis_limits.raise_()
+                self.dlg_axis_limits.activateWindow()
+                return
+
+            # Create new dialog without Qt parent to make it independent
+            # But pass self to the dialog so it can access plot_ax, etc.
+            dialog = AxisLimitsDialog(parent_window=self)
+            dialog.setModal(False)
+            dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+            # Prefill with last applied limits or current axis limits
+            if self._last_xlim is not None or self._last_ylim is not None:
+                dialog.set_current_limits(self._last_xlim, self._last_ylim)
+            else:
+                # Use current axis limits
+                current_xlim = self.plot_ax.get_xlim()
+                current_ylim = self.plot_ax.get_ylim()
+                dialog.set_current_limits(current_xlim, current_ylim)
+
+            # Store reference and clear it when dialog is destroyed
+            self.dlg_axis_limits = dialog
+            dialog.destroyed.connect(lambda: setattr(self, 'dlg_axis_limits', None))
+
+            dialog.show()
+        except Exception as e:
+            self._set_status(f"Error opening Axis Limits dialog: {str(e)}")
+
+    def _apply_axis_limits(self, x_min, x_max, y_min, y_max):
+        """Apply partial or complete axis limits safely"""
+        try:
+            # Get current limits
+            current_xlim = self.plot_ax.get_xlim()
+            current_ylim = self.plot_ax.get_ylim()
+
+            # Build new limits (use current if None)
+            new_xlim = [
+                x_min if x_min is not None else current_xlim[0],
+                x_max if x_max is not None else current_xlim[1]
+            ]
+            new_ylim = [
+                y_min if y_min is not None else current_ylim[0],
+                y_max if y_max is not None else current_ylim[1]
+            ]
+
+            # Apply new limits
+            self.plot_ax.set_xlim(new_xlim)
+            self.plot_ax.set_ylim(new_ylim)
+
+            # Store for future reference
+            self._last_xlim = new_xlim
+            self._last_ylim = new_ylim
+
+            # Redraw
+            self.plot_canvas.draw_idle()
+
+            # Status message
+            self._set_status(f"Axis limits set: X=[{new_xlim[0]:.2f}, {new_xlim[1]:.2f}], Y=[{new_ylim[0]:.2f}, {new_ylim[1]:.2f}]")
+
+        except Exception as e:
+            self._set_status(f"Failed to apply axis limits: {e}")
+
     def _apply_load_settings(self, file_03: str, file_04_dict: dict):
         """Apply selected definition files (filenames, resolved under ./setting)."""
         try:
@@ -5694,7 +5999,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.manual_zoom_active:
                 # Sliding X-axis window: show the last W points
                 if xmax is not None:
-                    self.plot_ax.set_xlim(xmax - self.rr_window_width, xmax)
+                    x_min = max(0, xmax - self.rr_window_width)  # Ensure X min never goes below 0
+                    self.plot_ax.set_xlim(x_min, xmax)
 
                 # Throttle Y-axis autoscale — only update occasionally
                 self._rr_autoscale_counter = (self._rr_autoscale_counter + 1) % 10
