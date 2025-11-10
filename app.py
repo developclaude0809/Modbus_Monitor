@@ -1437,9 +1437,9 @@ def apply_control_sizes(root: QtWidgets.QWidget, tokens: UiTokens):
 class DeviceInformationDialog(QtWidgets.QDialog):
     """Non-modal dialog to display firmware version and device information"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, parent_window=None):
         super().__init__(parent)
-        self.parent_window = parent
+        self.parent_window = parent_window if parent_window is not None else parent
         self.setWindowTitle("Fan Information")
         self.setMinimumWidth(540)
         self.setMinimumHeight(350)
@@ -1677,9 +1677,9 @@ class DeviceInformationDialog(QtWidgets.QDialog):
 class AlarmLogDialog(QtWidgets.QDialog):
     """Non-modal dialog to display Alarm Log (Alarm_01 to Alarm_20)"""
 
-    def __init__(self, parent=None, alarm_def_file: str = ""):
+    def __init__(self, parent=None, parent_window=None, alarm_def_file: str = ""):
         super().__init__(parent)
-        self.parent_window = parent
+        self.parent_window = parent_window if parent_window is not None else parent
         self.setWindowTitle("Alarm Log")
 
         # Make it non-modal and delete on close
@@ -4949,7 +4949,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             # Create new dialog without parent to make it independent
-            dialog = DeviceInformationDialog(None)
+            dialog = DeviceInformationDialog(parent=None, parent_window=self)
             dialog.setModal(False)
             dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
 
@@ -4972,7 +4972,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             # Create new dialog without parent to make it independent
-            dialog = AlarmLogDialog(None)
+            dialog = AlarmLogDialog(parent=None, parent_window=self)
             dialog.setModal(False)
             dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
 
