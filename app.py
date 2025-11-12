@@ -1949,6 +1949,10 @@ class AlarmLogDialog(QtWidgets.QDialog):
         """Update display for a single alarm dynamically based on field definitions"""
         widgets = self.alarm_data_widgets[alarm_idx]
 
+        # Determine border color based on even/odd row (alarm_idx is 0-based, display is 1-based)
+        alarm_num = alarm_idx + 1
+        border_color = Colors.BORDER_NORMAL if alarm_num % 2 == 0 else Colors.AKAKUCHIBA
+
         # Process each field according to its definition
         for field_idx, field in enumerate(self.alarm_fields):
             if field_idx >= len(data) or field_idx >= len(widgets):
@@ -1967,7 +1971,7 @@ class AlarmLogDialog(QtWidgets.QDialog):
                     widget.setText(text)
                     widget.setStyleSheet(
                         f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                        f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+                        f"padding:4px; border:1px solid {border_color}; border-radius:3px; font-size:11px;"
                     )
                 elif field_format == "value":
                     # Parse value with ratio
@@ -1986,7 +1990,7 @@ class AlarmLogDialog(QtWidgets.QDialog):
                     widget.setText(text)
                     widget.setStyleSheet(
                         f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                        f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+                        f"padding:4px; border:1px solid {border_color}; border-radius:3px; font-size:11px;"
                     )
                 else:
                     widget.setText(f"{raw_value}")
@@ -1997,11 +2001,16 @@ class AlarmLogDialog(QtWidgets.QDialog):
     def _clear_alarm_display(self, alarm_idx):
         """Clear display for a single alarm (show dashes)"""
         widgets = self.alarm_data_widgets[alarm_idx]
+
+        # Determine border color based on even/odd row (alarm_idx is 0-based, display is 1-based)
+        alarm_num = alarm_idx + 1
+        border_color = Colors.BORDER_NORMAL if alarm_num % 2 == 0 else Colors.AKAKUCHIBA
+
         for widget in widgets:
             widget.setText("---")
             widget.setStyleSheet(
                 f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                f"padding:4px; border:1px solid {Colors.BORDER_NORMAL}; border-radius:3px; font-size:11px;"
+                f"padding:4px; border:1px solid {border_color}; border-radius:3px; font-size:11px;"
             )
             widget.setToolTip("")
 
@@ -2014,9 +2023,13 @@ class AlarmLogDialog(QtWidgets.QDialog):
         bit_names = bit_labels_str.split('|') if bit_labels_str else []
 
         active_statuses = []
-        for bit_idx, bit_name in enumerate(bit_names):
-            if bit_idx < 16:  # Max 16 bits
-                if status_raw & (1 << bit_idx):
+        # Check bits from MSB to LSB (bit 15 down to bit 0)
+        for i in range(15, -1, -1):
+            if status_raw & (1 << i):
+                # Map bit position to label index (MSB-first ordering)
+                label_idx = 15 - i
+                if label_idx < len(bit_names):
+                    bit_name = bit_names[label_idx]
                     if bit_name and bit_name.upper() not in ("RESERVE", "RESERVED", ""):
                         active_statuses.append(bit_name)
 
