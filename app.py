@@ -2782,6 +2782,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._03_autosave_timer.setInterval(500)  # 500ms debounce
         self._03_autosave_timer.timeout.connect(self._save_03_memory_addresses)
 
+        # ========== CENTRALIZED UI STATE STORAGE ==========
+        # Internal state for 0x03 holding registers (10 rows)
+        self.state_03: List[Optional[int]] = [None] * 10  # Values for 10 register rows
+        self.state_03_errors: List[bool] = [False] * 10   # Error flags for 10 rows
+
+        # Internal state for 0x04 input registers (12 registers)
+        self.state_04: List[Optional[int]] = [None] * 12  # Values for 12 input registers
+        self.state_04_errors: List[bool] = [False] * 12   # Error flags for 12 registers
+
+        # Internal state for mode indicator (Normal/Bypass)
+        self.state_mode_indicator: Optional[int] = None
+
+        # Internal state for plot data (already exists as self.plot_data, reuse it)
+        # self.plot_data is already defined above
+
         self._build_ui()
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
@@ -4396,6 +4411,244 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_canvas.draw_idle()
         self._set_status("Zoomed to selection")
 
+    # ========== CENTRALIZED UI UPDATE FUNCTIONS ==========
+    def update_03_values(self, data: List[Tuple[int, Optional[int], Optional[str]]]):
+        """Centralized update for 0x03 holding register displays.
+
+        Args:
+            data: List of tuples (index, value, error) for each register row.
+                  - index: Row index (0-9)
+                  - value: Register value (int) or None if error
+                  - error: Error message or None if successful
+        """
+        for index, value, error in data:
+            if index < 0 or index >= 10:
+                continue
+
+            # Update internal state
+            if value is not None:
+                self.state_03[index] = value
+                self.state_03_errors[index] = False
+            else:
+                self.state_03_errors[index] = True
+
+            # Update UI widget
+            if value is not None:
+                self.rowValues[index].setText(str(value))
+                self.rowValues[index].setStyleSheet(
+                    f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                    f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                    f"font-weight:600; font-size:16px;"
+                )
+            else:
+                # Keep existing value but show red border to indicate error
+                self.rowValues[index].setStyleSheet(
+                    f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                    f"padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
+                    f"font-weight:600; font-size:16px;"
+                )
+
+    def update_04_values(self, values: Optional[List[int]], error: Optional[str] = None):
+        """Centralized update for 0x04 input register displays.
+
+        Args:
+            values: List of 12 register values, or None if all failed
+            error: Error message if all failed
+        """
+        # FIXED: Add widget existence check to prevent crash on deleted widgets
+        if not hasattr(self, 'inputRegValues') or len(self.inputRegValues) != 12:
+            return
+
+        try:
+            if values is not None and isinstance(values, list) and len(values) == 12:
+                for i, val in enumerate(values):
+                    # Update internal state
+                    if val is not None:
+                        self.state_04[i] = val
+                        self.state_04_errors[i] = False
+
+                        # Use custom rendering based on definition file
+                        rendered_text = self._render_input04(i, val)
+                        self.inputRegValues[i].setText(rendered_text)
+                        self.inputRegValues[i].setStyleSheet(
+                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                            f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                            f"font-weight:600; font-size:14px;"
+                        )
+                    else:
+                        # Individual register failed
+                        self.state_04_errors[i] = True
+                        self.inputRegValues[i].setStyleSheet(
+                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                            f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
+                            f"font-weight:600; font-size:14px;"
+                        )
+            else:
+                # Error case - show red border on all registers
+                for i in range(12):
+                    self.state_04_errors[i] = True
+                    self.inputRegValues[i].setStyleSheet(
+                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                        f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
+                        f"font-weight:600; font-size:14px;"
+                    )
+        except (RuntimeError, AttributeError):
+            # Widget was deleted during update, exit gracefully
+            return
+
+    def reset_04_values(self):
+        """Reset all 0x04 input register displays to default state."""
+        for i in range(12):
+            self.state_04[i] = None
+            self.state_04_errors[i] = False
+            self.inputRegValues[i].setText("----")
+            self.inputRegValues[i].setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:14px;"
+            )
+
+    def update_mode_indicator(self, value: Optional[int]):
+        """Centralized update for Normal/Bypass mode indicator.
+
+        Args:
+            value: Mode value (0=Normal, non-0=Bypass) or None if error
+        """
+        # Update internal state
+        self.state_mode_indicator = value
+
+        # Update UI
+        if value is not None:
+            if value == 0:
+                # Normal mode - Normal text active, Bypass text inactive
+                self.lblNormalLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+                self.lblBypassLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.BG_INPUT}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+            else:
+                # Bypass mode - Normal text inactive, Bypass text active
+                self.lblNormalLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.BG_INPUT}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+                self.lblBypassLight.setStyleSheet(
+                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
+                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+                )
+        else:
+            # Error or disconnected - both texts inactive
+            self.lblNormalLight.setStyleSheet(
+                f"QLabel{{color:{Colors.BG_INPUT}; "
+                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+            )
+            self.lblBypassLight.setStyleSheet(
+                f"QLabel{{color:{Colors.BG_INPUT}; "
+                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+            )
+
+    def update_plot_data(self, channel: int, value: Optional[int], timestamp: Optional[float]):
+        """Centralized update for plot data.
+
+        Args:
+            channel: Channel index (0-3)
+            value: Register value or None if error
+            timestamp: Timestamp in seconds or None if error
+        """
+        if value is not None and timestamp is not None:
+            # Convert Modbus Uint16 (0-65535) to signed Int16 (-32768 to +32767)
+            if value > 32767:
+                value -= 65536
+
+            # Store data in internal state
+            elapsed = timestamp - self.plot_start_time
+            self.plot_data[channel]['time'].append(elapsed)
+            self.plot_data[channel]['value'].append(value)
+
+            # Keep only last 375 points per channel
+            if len(self.plot_data[channel]['time']) > 375:
+                self.plot_data[channel]['time'].pop(0)
+                self.plot_data[channel]['value'].pop(0)
+
+            # Update plot visualization
+            self._update_plot()
+
+    def update_polling_button(self, is_polling: bool):
+        """Centralized update for polling button state.
+
+        Args:
+            is_polling: True if polling is active, False otherwise
+        """
+        if is_polling:
+            self.btnPolling.setText("End")
+            self.btnPolling.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.ROSE_CORAL};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
+            )
+        else:
+            self.btnPolling.setText("Start")
+            self.btnPolling.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+            )
+
+    def update_draw_button(self, is_drawing: bool, mode: str = "03"):
+        """Centralized update for draw/plot button state.
+
+        Args:
+            is_drawing: True if plotting is active, False otherwise
+            mode: Current mode ("03" or "RR")
+        """
+        if is_drawing:
+            self.btnDraw.setText("Stop")
+            self.btnDraw.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.ROSE_CORAL};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
+            )
+        else:
+            if mode == "RR":
+                self.btnDraw.setText("Plot (RR)")
+            else:
+                self.btnDraw.setText("Draw")
+            self.btnDraw.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+            )
+
+    def update_connect_button(self, is_connected: bool):
+        """Centralized update for connect button state.
+
+        Args:
+            is_connected: True if connected, False otherwise
+        """
+        if is_connected:
+            self.btnConnect.setText("Disconnect")
+            self.btnConnect.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.ROSE_CORAL};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
+            )
+        else:
+            self.btnConnect.setText("Connect")
+            self.btnConnect.setStyleSheet(
+                f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+                f"font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} "
+                f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+                f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+            )
+
     # ---------- Status ----------
     def _set_status(self, msg: str):
         """Update status bar"""
@@ -4668,12 +4921,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_connected_ui(self, connected: bool):
         """Update UI for connection state"""
-        if connected:
-            self.btnConnect.setText("Disconnect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
-        else:
-            self.btnConnect.setText("Connect")
-            self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Use centralized update function
+        self.update_connect_button(connected)
 
     # ---------- Ports & Connection ----------
     def _refresh_ports(self):
@@ -5443,8 +5692,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.sigStatus.connect(self._set_status)
             self.worker.start()
 
-            self.btnPolling.setText("End")
-            self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
+            # Use centralized update function
+            self.update_polling_button(True)
             self._set_status("Polling started")
             # Query mode indicator after 200ms
             QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
@@ -5458,28 +5707,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
-        # Reset input register displays (all 12 registers)
-        for i in range(12):
-            self.inputRegValues[i].setText("----")
-            self.inputRegValues[i].setStyleSheet(
-                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                f"font-weight:600; font-size:14px;"
-            )
-        self.btnPolling.setText("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Reset input register displays using centralized function
+        self.reset_04_values()
+        self.update_polling_button(False)
         self._set_status("Polling stopped")
 
     @QtCore.pyqtSlot(int, object, object)
     def _on_register_update(self, index: int, value: Optional[int], error: Optional[str]):
         """Update register display from polling thread"""
-        if value is not None:
-            # Update value and restore normal border
-            self.rowValues[index].setText(str(value))
-            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
-        else:
-            # Keep existing value but show red border to indicate error
-            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; font-weight:600; font-size:16px;")
+        # Use centralized update function
+        self.update_03_values([(index, value, error)])
 
     def _render_input04(self, index: int, raw_value: int) -> str:
         """Render 0x04 input register value according to its definition"""
@@ -5552,41 +5789,8 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.pyqtSlot(object, object)  # FIXED: Changed from (list, object) to (object, object) to allow None values
     def _on_input_registers_update(self, values: Optional[List[int]], error: Optional[str]):
         """Update input register displays from polling thread"""
-        # FIXED: Add widget existence check to prevent crash on deleted widgets
-        if not hasattr(self, 'inputRegValues') or len(self.inputRegValues) != 12:
-            return
-
-        try:  # FIXED: Wrap in try-except to catch widget deletion race
-            # FIXED: Added isinstance(values, list) check to prevent TypeError
-            if values is not None and isinstance(values, list) and len(values) == 12:
-                for i, val in enumerate(values):
-                    if val is not None:
-                        # Use custom rendering based on definition file and restore normal border
-                        rendered_text = self._render_input04(i, val)
-                        self.inputRegValues[i].setText(rendered_text)
-                        self.inputRegValues[i].setStyleSheet(
-                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                            f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                            f"font-weight:600; font-size:14px;"
-                        )
-                    else:
-                        # Individual register failed - keep existing value but show red border
-                        self.inputRegValues[i].setStyleSheet(
-                            f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                            f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
-                            f"font-weight:600; font-size:14px;"
-                        )
-            else:
-                # Error case - keep existing values but show red border to indicate error
-                for i in range(12):
-                    self.inputRegValues[i].setStyleSheet(
-                        f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                        f"padding:6px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
-                        f"font-weight:600; font-size:14px;"
-                    )
-        except (RuntimeError, AttributeError):
-            # FIXED: Widget was deleted during update, exit gracefully
-            return
+        # Use centralized update function
+        self.update_04_values(values, error)
 
     def _query_mode_indicator_once(self):
         """Query mode indicator register 0x0007 once and update UI"""
@@ -5607,37 +5811,8 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.pyqtSlot(object)
     def _on_mode_indicator_update(self, value: Optional[int]):
         """Update Normal/Bypass indicator text color based on register 0x0007 value"""
-        if value is not None:
-            if value == 0:
-                # Normal mode (0) - Normal text turns red (ON), Bypass text stays gray (OFF)
-                self.lblNormalLight.setStyleSheet(
-                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
-                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-                )
-                self.lblBypassLight.setStyleSheet(
-                    f"QLabel{{color:{Colors.BG_INPUT}; "
-                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-                )
-            else:
-                # Bypass mode (non-0) - Normal text stays gray (OFF), Bypass text turns red (ON)
-                self.lblNormalLight.setStyleSheet(
-                    f"QLabel{{color:{Colors.BG_INPUT}; "
-                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-                )
-                self.lblBypassLight.setStyleSheet(
-                    f"QLabel{{color:{Colors.SOFT_YELLOW}; "
-                    f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-                )
-        else:
-            # Error or disconnected - both texts turn gray (OFF)
-            self.lblNormalLight.setStyleSheet(
-                f"QLabel{{color:{Colors.BG_INPUT}; "
-                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-            )
-            self.lblBypassLight.setStyleSheet(
-                f"QLabel{{color:{Colors.BG_INPUT}; "
-                f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-            )
+        # Use centralized update function
+        self.update_mode_indicator(value)
 
     # ---------- Write ----------
     def _write_register(self, index: int):
@@ -5674,8 +5849,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 shown = int(res2[0])
 
             # Keep the value in the edit box (don't clear it)
-            self.rowValues[index].setText(str(shown))
-            self.rowValues[index].setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:16px;")
+            # Use centralized update function
+            self.update_03_values([(index, shown, None)])
             self._set_status(f"Write successful: Address {addr} = {shown}")
 
         except Exception as e:
@@ -5746,8 +5921,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_worker.sigStatus.connect(self._set_status)
             self.plot_worker.start()
 
-            self.btnDraw.setText("Stop")
-            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
+            # Use centralized update function
+            self.update_draw_button(True, "03")
             self._set_status("Plotting started")
             # Query mode indicator after 200ms
             QtCore.QTimer.singleShot(200, self._query_mode_indicator_once)
@@ -5762,30 +5937,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plot_worker.stop()
             self.plot_worker.wait(1500)
             self.plot_worker = None
-        self.btnDraw.setText("Draw")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Use centralized update function
+        self.update_draw_button(False, "03")
         self._set_status("Plotting stopped")
 
     @QtCore.pyqtSlot(int, object, object)
     def _on_plot_data(self, channel: int, value: Optional[int], timestamp: Optional[float]):
         """Update plot with new data point"""
-        if value is not None and timestamp is not None:
-            # Convert Modbus Uint16 (0-65535) to signed Int16 (-32768 to +32767)
-            if value > 32767:
-                value -= 65536
-
-            # Store data
-            elapsed = timestamp - self.plot_start_time
-            self.plot_data[channel]['time'].append(elapsed)
-            self.plot_data[channel]['value'].append(value)
-
-            # Keep only last 375 points per channel
-            if len(self.plot_data[channel]['time']) > 375:
-                self.plot_data[channel]['time'].pop(0)
-                self.plot_data[channel]['value'].pop(0)
-
-            # Update plot
-            self._update_plot()
+        # Use centralized update function
+        self.update_plot_data(channel, value, timestamp)
 
     # ---------- RR Mode Methods ----------
     def _toggle_mode(self):
@@ -5812,8 +5972,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for combo in self.plotCombos:
             combo.setEnabled(False)
 
-        # Update plot button text
-        self.btnDraw.setText("Plot (RR)")
+        # Update plot button text using centralized function
+        self.update_draw_button(False, "RR")
 
         # Clear plot data
         for ch_data in self.rr_data:
@@ -5854,8 +6014,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
         self.plot_canvas.draw_idle()
 
-        # Update plot button text
-        self.btnDraw.setText("Draw")
+        # Update plot button text using centralized function
+        self.update_draw_button(False, "03")
 
         # Clear plot data
         for ch_data in self.plot_data:
@@ -5947,8 +6107,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # Start the plot update timer for throttled redraws
             self.rr_plot_timer.start()
 
-            self.btnDraw.setText("Stop")
-            self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.ROSE_CORAL};}} QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}")
+            # Use centralized update function
+            self.update_draw_button(True, "RR")
             self._set_status(f"RR Mode plotting started (Page {self.rr_current_page})")
 
         except Exception as e:
@@ -5964,8 +6124,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rr_worker.stop()
             self.rr_worker.wait(1500)
             self.rr_worker = None
-        self.btnDraw.setText("Plot (RR)")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Use centralized update function
+        self.update_draw_button(False, "RR")
         self._set_status("RR Mode stopped")
 
     @QtCore.pyqtSlot(int, tuple)
@@ -6030,8 +6190,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_rr_finished(self):
         """Handle RR Mode worker finished signal"""
         self.rr_worker = None
-        self.btnDraw.setText("Plot (RR)")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Use centralized update function
+        self.update_draw_button(False, "RR")
 
     def _update_plot(self):
         """Redraw the plot with current data"""
