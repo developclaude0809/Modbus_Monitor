@@ -2797,7 +2797,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Internal state for plot data (already exists as self.plot_data, reuse it)
         # self.plot_data is already defined above
 
-        self._build_ui()
+        # Build UI and setup QStackedWidget
+        root = self._build_ui()
+
+        self.stack = QtWidgets.QStackedWidget()
+        self.stack.addWidget(root)       # Page 0: Classic layout
+
+        self.setCentralWidget(self.stack)
+
         self._auto_load_definitions()
         self._restore_last_mode()  # Restore last mode from file
         # Note: _auto_load_definitions() already loads 04 defs from dmem, no need to call _load_input_defs()
@@ -2806,10 +2813,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_ports()
 
     # ---------- UI Build ----------
-    def _build_ui(self):
+    def _build_ui(self) -> QtWidgets.QWidget:
         """Build the user interface"""
         root = QtWidgets.QWidget()
-        self.setCentralWidget(root)
         main_layout = QtWidgets.QVBoxLayout(root)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
@@ -3617,6 +3623,13 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_layout.addLayout(right_column)  # Right column (controls + plot)
 
         main_layout.addLayout(bottom_layout)
+
+        return root
+
+    def switch_layout(self, index: int):
+        """Switch to a different layout page in the stacked widget"""
+        self.stack.setCurrentIndex(index)
+        self.adjustSize()  # Allow window to resize naturally for future pages
 
     # ---------- Toolbar Filtering ----------
     def _filter_toolbar_buttons(self):
