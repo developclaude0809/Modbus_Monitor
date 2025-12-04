@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtGui import QIcon
 
+from theme import Colors, UiTokens
+
 # ==================== DEFAULTS ====================
 # Centralized defaults for timing values (milliseconds)
 DEFAULT_TIMEOUT_MS = 40
@@ -47,79 +49,6 @@ try:
     import matplotlib.pyplot as plt
 except ImportError:
     sys.exit("Missing matplotlib. Please install: pip install matplotlib")
-
-
-# ==================== COLOR CONFIGURATION ====================
-# Unified color palette sorted by RGB order for easy modification
-
-class Colors:
-    # ------------------------------------------------------------
-    # MASTER COLOR PALETTE (Sorted by RGB hex values)
-    # ------------------------------------------------------------
-    BTN_DANGER_BG     = "#A32424"
-    BTN_SUCCESS_HOVER = "#10B97B"
-    BTN_SUCCESS_BG    = "#059661"
-    MIDNIGHT_NAVY     = "#0F172A"
-    DEEP_BLUE         = "#2563EB"
-    MIDNIGHT_OCEAN    = "#3282b8"
-    COOL_GRAY         = "#1E293B"
-    SKY_BLUE          = "#60A5FA"
-    MIST_BLUE         = "#38BDF8"
-    MINT_GLOW         = "#34D399"
-    SOFT_YELLOW       = "#F4F27E"
-    CREAM_TINT        = "#FFF5C2"
-    ROSE_CORAL        = "#F87171"
-    BENIUKON          = "#E98B2A"
-    BG_INPUT          = "#334155"
-    AKAKUCHIBA        = "#C78550"
-    BTN_TEXT_COLOR    = "#FFFFFF"
-
-    # ------------------------------------------------------------
-    # SEMANTIC COLORS Contextual mapping for dark UI
-    # ------------------------------------------------------------
-
-    # Backgrounds
-    BG_APP         = MIDNIGHT_NAVY
-    BG_PANEL       = COOL_GRAY
-    BG_INPUT_COLOR = BG_INPUT
-    BG_BUTTON      = DEEP_BLUE
-    BG_HEADER      = COOL_GRAY
-
-    # Text
-    TEXT_PRIMARY   = CREAM_TINT
-    TEXT_ON_DARK   = CREAM_TINT
-    TEXT_LABEL     = MIST_BLUE
-
-    # Borders
-    BORDER_NORMAL  = MIST_BLUE
-    BORDER_FOCUS   = SKY_BLUE
-    BORDER_PANEL   = MIST_BLUE
-
-    # Buttons
-    BTN_PRIMARY_BG     = DEEP_BLUE
-    BTN_PRIMARY_TEXT   = CREAM_TINT
-    BTN_PRIMARY_COLOR  = BTN_TEXT_COLOR
-    BTN_PRIMARY_HOVER  = SKY_BLUE
-
-    BTN_DANGER_HOVER   = ROSE_CORAL
-
-    BTN_SUCCESS_BG     = BTN_SUCCESS_BG
-    BTN_SUCCESS_HOVER  = BTN_SUCCESS_HOVER
-
-    BTN_SECONDARY_BG   = DEEP_BLUE
-    BTN_SECONDARY_HOVER= MIST_BLUE
-
-    # Status & Special Elements
-    STATUS_ERROR       = ROSE_CORAL
-    STATUS_SUCCESS     = MINT_GLOW
-    STATUS_NORMAL      = SOFT_YELLOW
-
-    ROW_NUMBER_BG      = COOL_GRAY
-    ROW_NUMBER_TEXT    = CREAM_TINT
-
-    VALUE_DISPLAY_BG   = COOL_GRAY
-    VALUE_DISPLAY_TEXT = CREAM_TINT
-# =============================================================
 
 
 # ==================== Modbus RTU ====================
