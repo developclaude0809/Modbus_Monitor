@@ -7,6 +7,9 @@ View layer for Modbus Monitor V1
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from theme import Colors, UiTokens
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT
+from typing import List
 
 
 class SearchableCombo(QtWidgets.QComboBox):
@@ -324,7 +327,38 @@ class MainView(QtCore.QObject):
         self.rowReads = []
         self.rowWrites = []
 
-        # Additional UI elements will be added as we extract them
+        # RD panel widgets
+        self.lblNormalLight = None
+        self.btnNormal = None
+        self.rdCombo = None
+        self.lblBypassLight = None
+        self.btnBypass = None
+        self.btnSwitch = None
+
+        # Reset panel widgets
+        self.btnReset = None
+        self.btnResetDef = None
+
+        # Plot panel widgets
+        self.plotLabels = []
+        self.plotCombos = []
+        self.probeValueLabels = []
+        self.btnModeSwitch = None
+        self.cmbRRPage = None
+        self.btnLoadDtbpt = None
+        self.btnDraw = None
+        self.plot_figure = None
+        self.plot_canvas = None
+        self.plot_ax = None
+        self.plot_lines = []
+        self.plot_toolbar = None
+
+        # Input register widgets
+        self.inputRegLabels = []
+        self.inputRegValues = []
+
+        # Status bar
+        self.status = None
 
     def setup_ui(self, window: QtWidgets.QMainWindow):
         """Build the complete UI and set it as the window's central widget
@@ -340,13 +374,42 @@ class MainView(QtCore.QObject):
         # Build UI panels
         uart_panel = self._build_uart_panel(window)
         motor_panel = self._build_motor_panel(window)
+        rw_panel = self._build_rw_panel(window)
+        rd_panel = self._build_rd_panel(window)
+        reset_panel = self._build_reset_panel(window)
+        plot_panel = self._build_plot_panel(window)
 
-        # Add panels to main layout
+        # Add UART panel to main layout
         main_layout.addWidget(uart_panel)
-        main_layout.addWidget(motor_panel)
 
-        # TODO: Add remaining panels (Read/Write, Plot, Input Registers, etc.)
-        # For now, we'll start with the basic panels
+        # Create left column with Motor Control and Read Addresses panels
+        left_column = QtWidgets.QVBoxLayout()
+        left_column.setSpacing(8)
+        left_column.addWidget(motor_panel)
+        left_column.addWidget(rw_panel)
+
+        # Create top row for RD and Reset panels (above plot panel)
+        top_control_row = QtWidgets.QHBoxLayout()
+        top_control_row.setSpacing(8)
+        top_control_row.addWidget(rd_panel)
+        top_control_row.addWidget(reset_panel)
+
+        # Create right column with top control row and plot panel
+        right_column = QtWidgets.QVBoxLayout()
+        right_column.setSpacing(8)
+        right_column.addLayout(top_control_row)
+        right_column.addWidget(plot_panel)
+
+        # Add left and right columns to main layout
+        content_row = QtWidgets.QHBoxLayout()
+        content_row.setSpacing(8)
+        content_row.addLayout(left_column)
+        content_row.addLayout(right_column)
+        main_layout.addLayout(content_row)
+
+        # Status bar
+        self.status = QtWidgets.QStatusBar()
+        window.setStatusBar(self.status)
 
         window.setCentralWidget(root)
 
@@ -551,3 +614,480 @@ class MainView(QtCore.QObject):
         motor_main_layout.addLayout(motor_bottom_layout)
 
         return motor_panel
+
+    def _build_rw_panel(self, window):
+        """Build Read/Write Addresses panel with register grid and input registers"""
+        # Import constants from logic or use defaults
+        try:
+            from logic import DEFAULT_TIMEOUT_MS, DEFAULT_POLL_INTERVAL_MS
+        except ImportError:
+            DEFAULT_TIMEOUT_MS = 500
+            DEFAULT_POLL_INTERVAL_MS = 1000
+
+        RWpanel = QtWidgets.QFrame()
+        RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        RWpanel.setStyleSheet(
+            f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} "
+            f"QLabel{{color:{Colors.TEXT_LABEL};}}"
+        )
+        RWpanel.setMinimumSize(550, 750)
+        RWpanel.setMaximumWidth(650)
+        RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
+
+        rv = QtWidgets.QVBoxLayout(RWpanel)
+        rv.setContentsMargins(3, 1, 3, 1)
+        rv.setSpacing(8)
+
+        # Top row: Start button
+        topRow = QtWidgets.QWidget()
+        topLayout = QtWidgets.QHBoxLayout(topRow)
+        topLayout.setSpacing(0)
+        topLayout.setContentsMargins(6, 0, 6, 0)
+
+        # Start/Stop Polling button
+        self.btnPolling = QtWidgets.QPushButton("Start")
+        self.btnPolling.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+        )
+        topLayout.addWidget(self.btnPolling)
+
+        # Timeout and Poll interval inputs
+        self.edTimeout = QtWidgets.QLineEdit(str(DEFAULT_TIMEOUT_MS))
+        self.edPoll = QtWidgets.QLineEdit(str(DEFAULT_POLL_INTERVAL_MS))
+
+        topLayout.addStretch()
+        rv.addWidget(topRow)
+
+        # Register grid (10 rows)
+        gridWidget = QtWidgets.QWidget()
+        gridWidget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        grid = QtWidgets.QGridLayout(gridWidget)
+        grid.setContentsMargins(1, 5, 1, 5)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(7)
+        grid.setColumnStretch(0, 8)
+        grid.setColumnStretch(1, 6)
+        grid.setColumnStretch(2, 6)
+
+        self.rowCombos: List[SearchableCombo] = []
+        self.rowReads: List[QtWidgets.QLabel] = []
+        self.rowWrites: List[QtWidgets.QLineEdit] = []
+
+        for i in range(10):
+            # Address selector combo
+            combo = SearchableCombo(half_width=False)
+            combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            combo.setMinimumHeight(25)
+            combo.addItem("---")
+            grid.addWidget(combo, i, 0)
+            self.rowCombos.append(combo)
+
+            # Read value display
+            val = QtWidgets.QLabel("----")
+            val.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            val.setMinimumHeight(25)
+            val.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:14px;"
+            )
+            grid.addWidget(val, i, 1)
+            self.rowReads.append(val)
+
+            # Write value input
+            edit = QtWidgets.QLineEdit()
+            edit.setPlaceholderText("Enter value (0-65535)")
+            edit.setValidator(QtGui.QIntValidator(0, 65535, window))
+            edit.setMinimumHeight(25)
+            edit.setStyleSheet(
+                f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; "
+                f"border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;}} "
+                f"QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}"
+            )
+            edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            grid.addWidget(edit, i, 2)
+            self.rowWrites.append(edit)
+
+        rv.addWidget(gridWidget)
+
+        # Input Register Display (FC 0x04)
+        inputRegFrame = QtWidgets.QFrame()
+        inputRegFrame.setMinimumHeight(250)
+        inputRegFrame.setMaximumHeight(400)
+        inputRegFrame.setStyleSheet(
+            f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}"
+        )
+
+        inputGrid = QtWidgets.QGridLayout(inputRegFrame)
+        inputGrid.setContentsMargins(3, 3, 3, 3)
+        inputGrid.setHorizontalSpacing(8)
+        inputGrid.setVerticalSpacing(2)
+
+        # Add 12 input registers (IN0-IN11)
+        self.inputRegLabels: List[QtWidgets.QLabel] = []
+        self.inputRegValues: List[QtWidgets.QLabel] = []
+
+        for i in range(8):
+            row = i // 2
+            col = i % 2
+
+            container = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(container)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)
+
+            lbl = QtWidgets.QLabel(f"IN{i}")
+            lbl.setFixedWidth(130)
+            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
+            hbox.addWidget(lbl)
+            self.inputRegLabels.append(lbl)
+
+            val = QtWidgets.QLabel("----")
+            val.setAlignment(QtCore.Qt.AlignCenter)
+            val.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:16px;"
+            )
+            hbox.addWidget(val)
+            self.inputRegValues.append(val)
+
+            inputGrid.addWidget(container, row, col)
+
+        # Add IN8-IN11
+        for i in range(8, 12):
+            row = 4 + (i - 8) // 2
+            col = (i - 8) % 2
+
+            container = QtWidgets.QWidget()
+            hbox = QtWidgets.QHBoxLayout(container)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(8)
+
+            lbl = QtWidgets.QLabel(f"IN{i}")
+            lbl.setFixedWidth(130)
+            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
+            hbox.addWidget(lbl)
+            self.inputRegLabels.append(lbl)
+
+            val = QtWidgets.QLabel("----")
+            val.setAlignment(QtCore.Qt.AlignCenter)
+            val.setStyleSheet(
+                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
+                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
+                f"font-weight:600; font-size:16px;"
+            )
+            hbox.addWidget(val)
+            self.inputRegValues.append(val)
+
+            inputGrid.addWidget(container, row, col)
+
+        rv.addWidget(inputRegFrame)
+
+        return RWpanel
+
+    def _build_rd_panel(self, window):
+        """Build RD Panel (Special Command Buttons)"""
+        RDpanel = QtWidgets.QFrame()
+        RDpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        RDpanel.setStyleSheet(
+            f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} "
+            f"QLabel{{color:{Colors.TEXT_LABEL};}}"
+        )
+        RDpanel.setMinimumHeight(self.tokens.panel_h_control())
+        RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+
+        rd_layout = QtWidgets.QGridLayout(RDpanel)
+        rd_layout.setContentsMargins(int(10 * self.tokens.s), self.tokens.pad()//2, int(50 * self.tokens.s), self.tokens.pad()//2)
+        rd_layout.setHorizontalSpacing(int(15 * self.tokens.s))
+        rd_layout.setVerticalSpacing(int(8 * self.tokens.s))
+
+        # Row 0, Col 0: Normal indicator
+        self.lblNormalLight = QtWidgets.QLabel("Normal")
+        self.lblNormalLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
+        self.lblNormalLight.setStyleSheet(
+            f"QLabel{{color:{Colors.BG_INPUT}; font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+        )
+        rd_layout.addWidget(self.lblNormalLight, 0, 0)
+
+        # Row 0, Col 1: Normal button
+        self.btnNormal = QtWidgets.QPushButton("Normal")
+        self.btnNormal.setMinimumWidth(self.tokens.btn_w())
+        self.btnNormal.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        self.btnNormal.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:3px 3px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        rd_layout.addWidget(self.btnNormal, 0, 1)
+
+        # Row 0, Col 2: List combobox
+        self.rdCombo = SearchableCombo(half_width=False)
+        self.rdCombo.addItems(["Inverter", "Converter", "Gsensor"])
+        self.rdCombo.setStyleSheet(f"""
+            QComboBox {{
+                font-size: {self.tokens.font_medium()}px;
+                font-weight: 600;
+                padding: 3px;
+            }}
+            QComboBox QAbstractItemView {{
+                font-size: {self.tokens.font_medium()}px;
+            }}
+        """)
+        self.rdCombo.setMinimumWidth(self.tokens.combo_w())
+        self.rdCombo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        rd_layout.addWidget(self.rdCombo, 0, 2)
+
+        # Row 1, Col 0: Bypass indicator
+        self.lblBypassLight = QtWidgets.QLabel("Bypass")
+        self.lblBypassLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
+        self.lblBypassLight.setStyleSheet(
+            f"QLabel{{color:{Colors.BG_INPUT}; font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
+        )
+        rd_layout.addWidget(self.lblBypassLight, 1, 0)
+
+        # Row 1, Col 1: Bypass button
+        self.btnBypass = QtWidgets.QPushButton("Bypass")
+        self.btnBypass.setMinimumWidth(self.tokens.btn_w())
+        self.btnBypass.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        self.btnBypass.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        rd_layout.addWidget(self.btnBypass, 1, 1)
+
+        # Row 1, Col 2: Switch button
+        self.btnSwitch = QtWidgets.QPushButton("Switch")
+        self.btnSwitch.setMinimumWidth(self.tokens.btn_w())
+        self.btnSwitch.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        self.btnSwitch.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        rd_layout.addWidget(self.btnSwitch, 1, 2)
+
+        return RDpanel
+
+    def _build_reset_panel(self, window):
+        """Build Reset Panel with Reset and Reset Def buttons"""
+        ResetPanel = QtWidgets.QFrame()
+        ResetPanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        ResetPanel.setStyleSheet(
+            f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} "
+            f"QLabel{{color:{Colors.TEXT_LABEL};}}"
+        )
+        ResetPanel.setMinimumSize(int(200 * self.tokens.s), int(80 * self.tokens.s))
+        ResetPanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+
+        reset_layout = QtWidgets.QVBoxLayout(ResetPanel)
+        reset_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
+        reset_layout.setSpacing(self.tokens.gap())
+
+        # Reset button
+        self.btnReset = QtWidgets.QPushButton("Reset")
+        self.btnReset.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.btnReset.setMinimumHeight(int(20 * self.tokens.s))
+        self.btnReset.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        reset_layout.addWidget(self.btnReset)
+
+        # Reset Def button
+        self.btnResetDef = QtWidgets.QPushButton("Reset Def")
+        self.btnResetDef.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.btnResetDef.setMinimumHeight(int(20 * self.tokens.s))
+        self.btnResetDef.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        reset_layout.addWidget(self.btnResetDef)
+
+        return ResetPanel
+
+    def _build_plot_panel(self, window):
+        """Build Plot Panel with matplotlib canvas and controls"""
+        plot_panel = QtWidgets.QFrame()
+        plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        plot_panel.setStyleSheet(
+            f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} "
+            f"QLabel{{color:{Colors.TEXT_LABEL};}}"
+        )
+        plot_panel.setMinimumHeight(600)
+        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        pv = QtWidgets.QVBoxLayout(plot_panel)
+        pv.setContentsMargins(2, 2, 2, 2)
+        pv.setSpacing(1)
+
+        # Address selection: 4 SearchableCombo boxes
+        addrWidget = QtWidgets.QWidget()
+        addrLayout = QtWidgets.QGridLayout(addrWidget)
+        addrLayout.setContentsMargins(0, 0, 0, 0)
+        addrLayout.setHorizontalSpacing(4)
+        addrLayout.setVerticalSpacing(1)
+
+        self.plotCombos: List[SearchableCombo] = []
+        self.plotLabels: List[ClickableLabel] = []
+        self.probeValueLabels: List[QtWidgets.QLabel] = []
+        channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+
+        for i in range(4):
+            lbl = ClickableLabel(f"Ch{i+1}")
+            lbl.setStyleSheet(
+                f"color:{channel_colors[i]}; font-weight:700; border:2px solid {channel_colors[i]}; "
+                f"border-radius:4px; padding:4px;"
+            )
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setFixedWidth(40)
+            self.plotLabels.append(lbl)
+
+            combo = SearchableCombo(half_width=False)
+            combo.addItem("---")
+            combo.setStyleSheet(f"font-size:12px; font-weight:500; border:2px solid {channel_colors[i]};")
+            combo.setFixedHeight(35)
+
+            row = 0
+            col = i * 2
+            addrLayout.addWidget(lbl, row, col)
+            addrLayout.addWidget(combo, row, col + 1)
+            self.plotCombos.append(combo)
+
+            # Probe value label
+            probe_val = QtWidgets.QLabel("---")
+            probe_val.setAlignment(QtCore.Qt.AlignCenter)
+            probe_val.setFixedHeight(30)
+            probe_val.setStyleSheet(
+                f"color:{channel_colors[i]}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
+                f"border:1px solid {channel_colors[i]}; border-radius:4px; background:{Colors.BG_INPUT};"
+            )
+            addrLayout.addWidget(probe_val, 1, col, 1, 2)
+            self.probeValueLabels.append(probe_val)
+
+        pv.addWidget(addrWidget)
+
+        # RR Mode controls row
+        rr_control_widget = QtWidgets.QWidget()
+        rr_control_layout = QtWidgets.QHBoxLayout(rr_control_widget)
+        rr_control_layout.setContentsMargins(0, 5, 0, 5)
+        rr_control_layout.setSpacing(10)
+
+        # Mode switch button
+        self.btnModeSwitch = QtWidgets.QPushButton("03")
+        self.btnModeSwitch.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:700; font-size:16px; padding:8px 20px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btnModeSwitch.setFixedHeight(35)
+        self.btnModeSwitch.setFixedWidth(80)
+        rr_control_layout.addWidget(self.btnModeSwitch)
+
+        # RR Mode page selector
+        lbl_page = QtWidgets.QLabel("Page:")
+        lbl_page.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:600; font-size:14px;")
+        rr_control_layout.addWidget(lbl_page)
+
+        self.cmbRRPage = SearchableCombo(half_width=False)
+        self.cmbRRPage.setMinimumWidth(80)
+        self.cmbRRPage.setFixedHeight(35)
+        for i in range(13):
+            self.cmbRRPage.addItem(str(i))
+        self.cmbRRPage.setCurrentText("0")
+        rr_control_layout.addWidget(self.cmbRRPage)
+
+        # Load .dtbpt button
+        self.btnLoadDtbpt = QtWidgets.QPushButton("Load .dtbpt")
+        self.btnLoadDtbpt.setStyleSheet(
+            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:600; font-size:14px; padding:8px 16px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
+        )
+        self.btnLoadDtbpt.setFixedHeight(35)
+        rr_control_layout.addWidget(self.btnLoadDtbpt)
+
+        # Initially disable RR controls
+        self.cmbRRPage.setEnabled(False)
+        self.btnLoadDtbpt.setEnabled(False)
+
+        rr_control_layout.addStretch()
+        pv.addWidget(rr_control_widget)
+
+        # Draw button
+        self.btnDraw = QtWidgets.QPushButton("Draw")
+        self.btnDraw.setStyleSheet(
+            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; "
+            f"font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} "
+            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
+            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
+        )
+        self.btnDraw.setFixedHeight(40)
+        self.btnDraw.setFixedWidth(250)
+        pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
+
+        # Matplotlib canvas
+        self.plot_figure = Figure(figsize=(8, 6), dpi=100, facecolor=Colors.BG_PANEL)
+        self.plot_canvas = FigureCanvas(self.plot_figure)
+        self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
+        self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
+        self.plot_ax.tick_params(colors=Colors.TEXT_PRIMARY)
+        for spine in self.plot_ax.spines.values():
+            spine.set_color(Colors.BORDER_NORMAL)
+        self.plot_ax.grid(True, alpha=0.3, color=Colors.TEXT_LABEL)
+        self.plot_figure.tight_layout(pad=1.0)
+
+        # Line objects for 4 channels
+        self.plot_lines = []
+        colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
+        for i, color in enumerate(colors):
+            line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=1.5)
+            line.set_antialiased(False)
+            self.plot_lines.append(line)
+        self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL, edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
+
+        # Navigation toolbar
+        self.plot_toolbar = NavigationToolbar2QT(self.plot_canvas, plot_panel)
+        self.plot_toolbar.setStyleSheet(f"""
+            QToolBar {{
+                background: {Colors.BG_PANEL};
+                border: 1px solid {Colors.BORDER_NORMAL};
+                border-radius: 4px;
+                spacing: 3px;
+                padding: 2px;
+            }}
+            QToolButton {{
+                background: {Colors.BG_INPUT};
+                color: {Colors.TEXT_PRIMARY};
+                border: 1px solid {Colors.BORDER_NORMAL};
+                border-radius: 3px;
+                padding: 3px;
+                margin: 1px;
+            }}
+            QToolButton:hover {{
+                background: {Colors.AKAKUCHIBA};
+                border-color: {Colors.BORDER_FOCUS};
+            }}
+            QToolButton:pressed {{
+                background: {Colors.DEEP_BLUE};
+            }}
+        """)
+
+        pv.addWidget(self.plot_canvas)
+        pv.addWidget(self.plot_toolbar)
+
+        return plot_panel

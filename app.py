@@ -1845,19 +1845,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---------- UI Build ----------
     def _build_ui(self) -> QtWidgets.QWidget:
-        """Build the user interface"""
-        root = QtWidgets.QWidget()
-        main_layout = QtWidgets.QVBoxLayout(root)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
+        """Build the user interface using MainView (view layer)"""
+        # ========== STEP 3: Use MainView to build ALL UI ==========
+        # MainView.setup_ui() builds all panels and returns via setCentralWidget
+        self.ui.setup_ui(self)
 
-        # ========== STEP 2: Use MainView to build UART and Motor panels ==========
-        # Build panels using View layer
-        uart_panel = self.ui._build_uart_panel(self)
-        motor_panel = self.ui._build_motor_panel(self)
+        # ========== STEP 3: Re-export ALL UI widgets (backward compatibility) ==========
+        # This allows existing code (signal connections, update methods) to work without changes
 
-        # ========== STEP 2: Re-export UI widgets (backward compatibility) ==========
-        # This allows old code (signal connections, etc.) to work without changes
         # UART panel widgets
         self.cmbPort = self.ui.cmbPort
         self.cmbBaud = self.ui.cmbBaud
@@ -1876,529 +1871,91 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnFanInfo = self.ui.btnFanInfo
         self.btnAlarmLog = self.ui.btnAlarmLog
 
-        # Connect signals (since View layer doesn't know about logic)
+        # Polling panel widgets
+        self.btnPolling = self.ui.btnPolling
+        self.edTimeout = self.ui.edTimeout
+        self.edPoll = self.ui.edPoll
+        self.rowCombos = self.ui.rowCombos
+        self.rowReads = self.ui.rowReads
+        self.rowWrites = self.ui.rowWrites
+
+        # Input register widgets
+        self.inputRegLabels = self.ui.inputRegLabels
+        self.inputRegValues = self.ui.inputRegValues
+
+        # RD panel widgets
+        self.lblNormalLight = self.ui.lblNormalLight
+        self.btnNormal = self.ui.btnNormal
+        self.rdCombo = self.ui.rdCombo
+        self.lblBypassLight = self.ui.lblBypassLight
+        self.btnBypass = self.ui.btnBypass
+        self.btnSwitch = self.ui.btnSwitch
+
+        # Reset panel widgets
+        self.btnReset = self.ui.btnReset
+        self.btnResetDef = self.ui.btnResetDef
+
+        # Plot panel widgets
+        self.plotLabels = self.ui.plotLabels
+        self.plotCombos = self.ui.plotCombos
+        self.probeValueLabels = self.ui.probeValueLabels
+        self.btnModeSwitch = self.ui.btnModeSwitch
+        self.cmbRRPage = self.ui.cmbRRPage
+        self.btnLoadDtbpt = self.ui.btnLoadDtbpt
+        self.btnDraw = self.ui.btnDraw
+        self.plot_figure = self.ui.plot_figure
+        self.plot_canvas = self.ui.plot_canvas
+        self.plot_ax = self.ui.plot_ax
+        self.plot_lines = self.ui.plot_lines
+        self.plot_toolbar = self.ui.plot_toolbar
+
+        # Status bar
+        self.status = self.ui.status
+
+        # ========== STEP 3: Connect ALL signal handlers ==========
+        # View layer doesn't know about logic, so MainWindow connects signals to handlers
+
+        # UART panel signals
         self.btnLoad.clicked.connect(self.open_load_dialog)
         self.btnRefreshPorts.clicked.connect(self._refresh_ports)
         self.btnConnect.clicked.connect(self._toggle_connection)
+
+        # Motor panel signals
         self.edMotorValue.returnPressed.connect(self._send_motor_value)
         self.btnMotorSend.clicked.connect(self._send_motor_value)
         self.btnMotorStop.clicked.connect(self._stop_motor)
         self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
         self.btnAlarmLog.clicked.connect(self.open_alarm_log_dialog)
 
-        # Add UART panel to main layout
-        main_layout.addWidget(uart_panel)
-
-
-        # ========== Read Addresses Panel ==========
-        RWpanel = QtWidgets.QFrame()
-        RWpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        RWpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Set responsive panel size - allow flexible height
-        RWpanel.setMinimumSize(550, 750)
-        RWpanel.setMaximumWidth(650)
-        RWpanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
-        rv = QtWidgets.QVBoxLayout(RWpanel)
-        # Internal padding for right frame
-        rv.setContentsMargins(3, 1, 3, 1)
-        # FIXED: Add spacing between register grid and input register frame to prevent overlap
-        rv.setSpacing(8)  # 8px spacing prevents widgets from overlapping
-
-        # Top row: Start button, ID, Timeout, Poll Interval in horizontal layout
-        topRow = QtWidgets.QWidget()
-        topLayout = QtWidgets.QHBoxLayout(topRow)
-        topLayout.setSpacing(0)
-        topLayout.setContentsMargins(6, 0, 6, 0)
-
-        # Start/Stop Polling button
-        self.btnPolling = QtWidgets.QPushButton("Start")
-        self.btnPolling.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
+        # Polling panel signals
         self.btnPolling.clicked.connect(self._toggle_polling)
-        topLayout.addWidget(self.btnPolling)
-
-        # Common widths
-        LABEL_WIDTH = 80
-        INPUT_WIDTH = 70
-
-
-        # Timeout and Poll defaults (ms) from centralized variables
-        self.edTimeout = QtWidgets.QLineEdit(str(DEFAULT_TIMEOUT_MS))
-        self.edPoll = QtWidgets.QLineEdit(str(DEFAULT_POLL_INTERVAL_MS))
-        # Keep variables in sync with UI edits
         self.edTimeout.editingFinished.connect(self._on_timeout_changed)
         self.edPoll.editingFinished.connect(self._on_poll_changed)
 
-        topLayout.addStretch()
-
-        # Load button will be moved below the grid (bottom-left)
-
-        rv.addWidget(topRow)
-
-        # Register grid (10 rows) without scroll
-        gridWidget = QtWidgets.QWidget()
-        # FIXED: Set size policy to prevent excessive expansion that causes overlap
-        gridWidget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        grid = QtWidgets.QGridLayout(gridWidget)
-        # Internal padding and spacing inside the register grid
-        grid.setContentsMargins(1, 5, 1, 5)
-        grid.setHorizontalSpacing(8)  # Increased from 4 to 8 for better column separation
-        grid.setVerticalSpacing(7)  # Increased from 10 to 15 for taller grid
-        # Column stretch ratio: address_list : read_value : enter_value = 8 : 6 : 6
-        # Increased value and write box widths for better readability
-        grid.setColumnStretch(0, 8)
-        grid.setColumnStretch(1, 6)
-        grid.setColumnStretch(2, 6)
-
-        self.rowCombos: List[SearchableCombo] = []
-        self.rowValues: List[QtWidgets.QLabel] = []
-        self.rowEdits:  List[QtWidgets.QLineEdit] = []
-
-        for i in range(10):
-            r = i
-            # No numeric label column; start with the address selector
-            combo = SearchableCombo(half_width=False)
-            combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-            combo.setMinimumHeight(25)  # Match height with value and edit boxes
-            combo.addItem("---")
-            # Use same styling as COM port - no custom arrow styling
-            grid.addWidget(combo, r, 0)
-            self.rowCombos.append(combo)
-
-            val = QtWidgets.QLabel("----")
-            val.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-            val.setMinimumHeight(25)  # Increased height for better readability
-            val.setStyleSheet(f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; padding:6px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; font-weight:600; font-size:14px;")
-            grid.addWidget(val, r, 1)
-            self.rowValues.append(val)
-
-            edit = QtWidgets.QLineEdit()
-            edit.setPlaceholderText("Enter value (0-65535)")
-            edit.setValidator(QtGui.QIntValidator(0, 65535, self))
-            edit.setMinimumHeight(25)  # Increased height for better readability
-            edit.setStyleSheet(f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;}} QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}")
-            edit.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        # Register grid: Write on Enter, auto-save on address change
+        for i, edit in enumerate(self.rowWrites):
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
-            grid.addWidget(edit, r, 2)
-            self.rowEdits.append(edit)
-
-        # Connect 10 register combo boxes to autosave (silent)
         for combo in self.rowCombos:
             combo.currentIndexChanged.connect(self._trigger_03_autosave)
 
-        rv.addWidget(gridWidget)
-
-        # Input Register Display (FC 0x04)
-        inputRegFrame = QtWidgets.QFrame()
-        inputRegFrame.setMinimumHeight(250)
-        inputRegFrame.setMaximumHeight(400)
-        inputRegFrame.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:2px solid {Colors.BORDER_PANEL}; border-radius:6px;}}")
-
-        # Create grid layout with 6 rows | 2 columns (12 registers total)
-        inputGrid = QtWidgets.QGridLayout(inputRegFrame)
-        inputGrid.setContentsMargins(3, 3, 3, 3)
-        inputGrid.setHorizontalSpacing(8)
-        inputGrid.setVerticalSpacing(2)
-
-        # Add 8 input registers (4 rows | 2 columns)
-        self.inputRegLabels: List[QtWidgets.QLabel] = []  # Store title labels
-        self.inputRegValues: List[QtWidgets.QLabel] = []
-        for i in range(8):
-            row = i // 2  # 0,0,1,1,2,2,3,3
-            col = i % 2   # 0,1,0,1,0,1,0,1
-
-            # Create horizontal container for label + value
-            container = QtWidgets.QWidget()
-            hbox = QtWidgets.QHBoxLayout(container)
-            hbox.setContentsMargins(0, 0, 0, 0)
-            hbox.setSpacing(8)
-
-            # Label "INx" (will be updated from definition file)
-            lbl = QtWidgets.QLabel(f"IN{i}")
-            lbl.setFixedWidth(130)  # Increased width to accommodate custom titles
-            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
-            hbox.addWidget(lbl)
-            self.inputRegLabels.append(lbl)  # Store for later title updates
-
-            # Value display
-            val = QtWidgets.QLabel("----")
-            val.setAlignment(QtCore.Qt.AlignCenter)
-            val.setStyleSheet(
-                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                f"font-weight:600; font-size:16px;"
-            )
-            hbox.addWidget(val)
-            self.inputRegValues.append(val)
-
-            # Add to grid
-            inputGrid.addWidget(container, row, col)
-
-        # Add 4 additional registers (IN8-IN11) for addresses 0x08-0x09 and 0x0E-0x0F
-        # Row 4: IN8 (0x08), IN9 (0x09)
-        # Row 5: IN10 (0x0E), IN11 (0x0F)
-        for i in range(8, 12):
-            row = 4 + (i - 8) // 2  # 4,4,5,5
-            col = (i - 8) % 2       # 0,1,0,1
-
-            # Create horizontal container for label + value
-            container = QtWidgets.QWidget()
-            hbox = QtWidgets.QHBoxLayout(container)
-            hbox.setContentsMargins(0, 0, 0, 0)
-            hbox.setSpacing(8)
-
-            # Label "INx"
-            lbl = QtWidgets.QLabel(f"IN{i}")
-            lbl.setFixedWidth(130)
-            lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-            lbl.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700; font-size:14px; padding:4px;")
-            hbox.addWidget(lbl)
-            self.inputRegLabels.append(lbl)
-
-            # Value display
-            val = QtWidgets.QLabel("----")
-            val.setAlignment(QtCore.Qt.AlignCenter)
-            val.setStyleSheet(
-                f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
-                f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
-                f"font-weight:600; font-size:16px;"
-            )
-            hbox.addWidget(val)
-            self.inputRegValues.append(val)
-
-            # Add to grid
-            inputGrid.addWidget(container, row, col)
-
-        rv.addWidget(inputRegFrame)
-
-        # Status bar
-        self.status = QtWidgets.QStatusBar()
-        self.setStatusBar(self.status)
-        self._set_status("Ready")
-
-        # region === RD Panel (Special Command Buttons - RESPONSIVE) ===
-        RDpanel = QtWidgets.QFrame()
-        RDpanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        RDpanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # RESPONSIVE: Use token-based minimum height instead of fixed, allow slight vertical expansion
-        RDpanel.setMinimumHeight(self.tokens.panel_h_control())
-        RDpanel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-
-        rd_layout = QtWidgets.QGridLayout(RDpanel)
-        # RESPONSIVE: Use token-based margins and spacing that scale with display
-        rd_layout.setContentsMargins(int(10 * self.tokens.s), self.tokens.pad()//2, int(50 * self.tokens.s), self.tokens.pad()//2)
-        rd_layout.setHorizontalSpacing(int(15 * self.tokens.s))
-        rd_layout.setVerticalSpacing(int(8 * self.tokens.s))
-
-        # Row 0, Col 0: Normal indicator text (changes color when active)
-        self.lblNormalLight = QtWidgets.QLabel("Normal")
-        self.lblNormalLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
-        self.lblNormalLight.setStyleSheet(
-            f"QLabel{{color:{Colors.BG_INPUT}; "
-            f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-        )
-        rd_layout.addWidget(self.lblNormalLight, 0, 0)
-
-        # Row 0, Col 1: Normal button
-        self.btnNormal = QtWidgets.QPushButton("Normal")
-        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
-        self.btnNormal.setMinimumWidth(self.tokens.btn_w())
-        self.btnNormal.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        # RESPONSIVE: Use token-based font size
-        self.btnNormal.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:3px 3px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
+        # RD panel signals
         self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
-        rd_layout.addWidget(self.btnNormal, 0, 1)
-
-        # Row 0, Col 2: List combobox
-        self.rdCombo = SearchableCombo(half_width=False)
-        self.rdCombo.addItems(["Inverter", "Converter", "Gsensor"])
-        # RESPONSIVE: Use token-based font sizes
-        self.rdCombo.setStyleSheet(f"""
-            QComboBox {{
-                font-size: {self.tokens.font_medium()}px;
-                font-weight: 600;
-                padding: 3px;
-            }}
-            QComboBox QAbstractItemView {{
-                font-size: {self.tokens.font_medium()}px;
-            }}
-        """)
-        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
-        self.rdCombo.setMinimumWidth(self.tokens.combo_w())
-        self.rdCombo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        rd_layout.addWidget(self.rdCombo, 0, 2)
-
-        # Row 1, Col 0: Bypass indicator text (changes color when active)
-        self.lblBypassLight = QtWidgets.QLabel("Bypass")
-        self.lblBypassLight.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter)
-        self.lblBypassLight.setStyleSheet(
-            f"QLabel{{color:{Colors.BG_INPUT}; "
-            f"font-weight:700; font-size:{self.tokens.font_large()}px; padding:0px; border:none;}}"
-        )
-        rd_layout.addWidget(self.lblBypassLight, 1, 0)
-
-        # Row 1, Col 1: Bypass button
-        self.btnBypass = QtWidgets.QPushButton("Bypass")
-        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
-        self.btnBypass.setMinimumWidth(self.tokens.btn_w())
-        self.btnBypass.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        # RESPONSIVE: Use token-based font size
-        self.btnBypass.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
         self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
-        rd_layout.addWidget(self.btnBypass, 1, 1)
-
-        # Row 1, Col 2: Switch button
-        self.btnSwitch = QtWidgets.QPushButton("Switch")
-        # RESPONSIVE: Use token-based minimum width instead of fixed, allow expansion
-        self.btnSwitch.setMinimumWidth(self.tokens.btn_w())
-        self.btnSwitch.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        # RESPONSIVE: Use token-based font size
-        self.btnSwitch.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_medium()}px; padding:5px 5px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
         self.btnSwitch.clicked.connect(self._send_switch_command)
-        rd_layout.addWidget(self.btnSwitch, 1, 2)
 
-        # endregion
-
-        # region === Reset Panel (Special Reset Buttons - RESPONSIVE) ===
-        ResetPanel = QtWidgets.QFrame()
-        ResetPanel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        ResetPanel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # RESPONSIVE: Increased minimum HEIGHT to prevent vertical text cutoff
-        # Height calculation: 2 buttons + padding + spacing + borders
-        # Base height 110px (was 80px) ensures both button texts display fully vertically
-        ResetPanel.setMinimumSize(int(200 * self.tokens.s), int(80 * self.tokens.s))
-        # Allow both horizontal and vertical expansion
-        ResetPanel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-
-        reset_layout = QtWidgets.QVBoxLayout(ResetPanel)
-        # RESPONSIVE: Use token-based margins and spacing
-        reset_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
-        reset_layout.setSpacing(self.tokens.gap())
-
-        # Reset button
-        self.btnReset = QtWidgets.QPushButton("Reset")
-        # RESPONSIVE: Allow button to expand within the panel
-        self.btnReset.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        # Set minimum height to ensure text displays without vertical cutoff
-        self.btnReset.setMinimumHeight(int(20 * self.tokens.s))
-        # RESPONSIVE: Use smaller font size for more compact appearance
-        self.btnReset.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
+        # Reset panel signals
         self.btnReset.clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
-        reset_layout.addWidget(self.btnReset)
-
-        # Reset Def button
-        self.btnResetDef = QtWidgets.QPushButton("Reset Def")
-        # RESPONSIVE: Allow button to expand within the panel
-        self.btnResetDef.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        # Set minimum height to ensure text displays without vertical cutoff
-        self.btnResetDef.setMinimumHeight(int(20 * self.tokens.s))
-        # RESPONSIVE: Use smaller font size for more compact appearance
-        self.btnResetDef.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:{self.tokens.font_normal()}px; padding:1px 10px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
         self.btnResetDef.clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
-        reset_layout.addWidget(self.btnResetDef)
-        # endregion
 
-        # Plot panel
-        plot_panel = QtWidgets.QFrame()
-        plot_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        plot_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Allow flexible height to adapt to screen size
-        plot_panel.setMinimumHeight(600)
-        plot_panel.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        pv = QtWidgets.QVBoxLayout(plot_panel)
-        pv.setContentsMargins(2, 2, 2, 2)
-        pv.setSpacing(1)
-
-        # Address selection: 4 SearchableCombo boxes in a single row
-        addrWidget = QtWidgets.QWidget()
-        addrLayout = QtWidgets.QGridLayout(addrWidget)
-        # addrLayout.setSpacing(2)
-        addrLayout.setContentsMargins(0, 0, 0, 0)
-        addrLayout.setHorizontalSpacing(4)
-        addrLayout.setVerticalSpacing(1)
-
-
-
-        self.plotCombos: List[SearchableCombo] = []
-        channel_colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
-        for i in range(4):
-            lbl = ClickableLabel(f"Ch{i+1}")
-            lbl.setStyleSheet(f"color:{channel_colors[i]}; font-weight:700; border:2px solid {channel_colors[i]}; border-radius:4px; padding:4px;")
-            lbl.setAlignment(QtCore.Qt.AlignCenter)
-            lbl.setFixedWidth(40)
+        # Plot panel signals
+        for i, lbl in enumerate(self.plotLabels):
             lbl.clicked.connect(lambda idx=i: self._toggle_plot_channel(idx))
-            self.plotLabels.append(lbl)
-
-            combo = SearchableCombo(half_width=False)
-            combo.addItem("---")
-            combo.setStyleSheet(f"font-size:12px; font-weight:500; border:2px solid {channel_colors[i]};")
-            # Fit four label+combo pairs within the fixed panel width
-            # combo.setFixedWidth(160)
-            combo.setFixedHeight(35)
-
-            # Place all channels on the same row
-            row = 0
-            col = i * 2  # label at even col, combo at odd col
-            addrLayout.addWidget(lbl, row, col)
-            addrLayout.addWidget(combo, row, col + 1)
-            self.plotCombos.append(combo)
-
-            # Add probe value label below each channel's combobox
-            probe_val = QtWidgets.QLabel("---")
-            probe_val.setAlignment(QtCore.Qt.AlignCenter)
-            probe_val.setFixedHeight(30)
-            probe_val.setStyleSheet(
-                f"color:{channel_colors[i]}; font-weight:700; font-size:14px; padding:4px; margin:0px; "
-                f"border:1px solid {channel_colors[i]}; border-radius:4px; background:{Colors.BG_INPUT};"
-            )
-            addrLayout.addWidget(probe_val, 1, col, 1, 2)
-            self.probeValueLabels.append(probe_val)
-
-        pv.addWidget(addrWidget)
-
-        # Apply initial channel styles
-        for i in range(4):
-            self._apply_plot_channel_style(i)
-
-        # RR Mode controls row
-        rr_control_widget = QtWidgets.QWidget()
-        rr_control_layout = QtWidgets.QHBoxLayout(rr_control_widget)
-        rr_control_layout.setContentsMargins(0, 5, 0, 5)
-        rr_control_layout.setSpacing(10)
-
-        # Mode switch button (03 Mode / RR Mode)
-        self.btnModeSwitch = QtWidgets.QPushButton("03")
-        self.btnModeSwitch.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:700; font-size:16px; padding:8px 20px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
-        self.btnModeSwitch.setFixedHeight(35)
-        self.btnModeSwitch.setFixedWidth(80)
         self.btnModeSwitch.clicked.connect(self._toggle_mode)
-        rr_control_layout.addWidget(self.btnModeSwitch)
-
-        # RR Mode page selector label
-        lbl_page = QtWidgets.QLabel("Page:")
-        lbl_page.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:600; font-size:14px;")
-        rr_control_layout.addWidget(lbl_page)
-
-        # RR Mode page selector (0-12)
-        self.cmbRRPage = SearchableCombo(half_width=False)
-        self.cmbRRPage.setMinimumWidth(80)
-        self.cmbRRPage.setFixedHeight(35)
-        for i in range(13):  # Pages 0-12
-            self.cmbRRPage.addItem(str(i))
-        self.cmbRRPage.setCurrentText("0")
         self.cmbRRPage.currentIndexChanged.connect(self._on_rr_page_changed)
-        rr_control_layout.addWidget(self.cmbRRPage)
-
-        # Load .dtbpt button
-        self.btnLoadDtbpt = QtWidgets.QPushButton("Load .dtbpt")
-        self.btnLoadDtbpt.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; "
-            f"font-weight:600; font-size:14px; padding:8px 16px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
-        self.btnLoadDtbpt.setFixedHeight(35)
         self.btnLoadDtbpt.clicked.connect(self._load_dtbpt_file)
-        rr_control_layout.addWidget(self.btnLoadDtbpt)
-
-        # Initially disable RR controls (enabled only in RR Mode)
-        self.cmbRRPage.setEnabled(False)
-        self.btnLoadDtbpt.setEnabled(False)
-
-        rr_control_layout.addStretch()
-        pv.addWidget(rr_control_widget)
-
-        # Draw button
-        self.btnDraw = QtWidgets.QPushButton("Draw")
-        self.btnDraw.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; font-size:16px; padding:10px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
-        # Keep the button compact instead of stretching across the panel
-        self.btnDraw.setFixedHeight(40)
-        self.btnDraw.setFixedWidth(250)
         self.btnDraw.clicked.connect(self._toggle_plotting)
-        pv.addWidget(self.btnDraw, alignment=QtCore.Qt.AlignHCenter)
 
-        # Matplotlib canvas
-        self.plot_figure = Figure(figsize=(8, 6), dpi=100, facecolor=Colors.BG_PANEL)
-        self.plot_canvas = FigureCanvas(self.plot_figure)
-        self.plot_canvas.setStyleSheet(f"background:{Colors.BG_PANEL};")
-        self.plot_ax = self.plot_figure.add_subplot(111, facecolor=Colors.COOL_GRAY)
-        # self.plot_ax.set_xlabel('Time (s)', color=Colors.TEXT_PRIMARY)
-        # self.plot_ax.set_ylabel('Value', color=Colors.TEXT_PRIMARY)
-        self.plot_ax.tick_params(colors=Colors.TEXT_PRIMARY)
-        for spine in self.plot_ax.spines.values():
-            spine.set_color(Colors.BORDER_NORMAL)
-        self.plot_ax.grid(True, alpha=0.3, color=Colors.TEXT_LABEL)
-        self.plot_figure.tight_layout(pad=1.0)
-
-        # Line objects for 4 channels
-        self.plot_lines = []
-        colors = [Colors.BENIUKON, Colors.MINT_GLOW, Colors.SOFT_YELLOW, Colors.ROSE_CORAL]
-        for i, color in enumerate(colors):
-            line, = self.plot_ax.plot([], [], label=f'Ch{i+1}', color=color, linewidth=1.5)
-            line.set_antialiased(False)  # Disable antialiasing for better performance in RR mode
-            self.plot_lines.append(line)
-        self.plot_ax.legend(loc='upper left', facecolor=Colors.BG_PANEL, edgecolor=Colors.BORDER_NORMAL, labelcolor=Colors.TEXT_PRIMARY)
-
-        # Add navigation toolbar below the plot
-        self.plot_toolbar = NavigationToolbar2QT(self.plot_canvas, plot_panel)
-        self.plot_toolbar.setStyleSheet(f"""
-            QToolBar {{
-                background: {Colors.BG_PANEL};
-                border: 1px solid {Colors.BORDER_NORMAL};
-                border-radius: 4px;
-                spacing: 3px;
-                padding: 2px;
-            }}
-            QToolButton {{
-                background: {Colors.BG_INPUT};
-                color: {Colors.TEXT_PRIMARY};
-                border: 1px solid {Colors.BORDER_NORMAL};
-                border-radius: 3px;
-                padding: 3px;
-                margin: 1px;
-            }}
-            QToolButton:hover {{
-                background: {Colors.AKAKUCHIBA};
-                border-color: {Colors.BORDER_FOCUS};
-            }}
-            QToolButton:pressed {{
-                background: {Colors.DEEP_BLUE};
-            }}
-        """)
-
-        pv.addWidget(self.plot_canvas)
-        pv.addWidget(self.plot_toolbar)
-
+        # ========== STEP 3: Setup matplotlib plot tools ==========
         # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save
         self._filter_toolbar_buttons()
 
@@ -2466,36 +2023,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Connect interactive zoom events after canvas creation
         self._connect_plot_events()
 
-        # Add all panels to main layout
-        main_layout.addWidget(uart_panel)
-
-        # Create left column with Motor Control and Read Addresses panels
-        left_column = QtWidgets.QVBoxLayout()
-        left_column.setSpacing(8)
-        left_column.addWidget(motor_panel)  # Motor Control Panel on top
-        left_column.addWidget(RWpanel)  # Read Addresses Panel on bottom
-
-        # Create top row for RD and Reset panels (above plot panel)
-        top_control_row = QtWidgets.QHBoxLayout()
-        top_control_row.setSpacing(8)
-        top_control_row.addWidget(RDpanel)      # RD Panel (left)
-        top_control_row.addWidget(ResetPanel)   # Reset Panel (right)
-
-        # Create right column with top control row and plot panel
-        right_column = QtWidgets.QVBoxLayout()
-        right_column.setSpacing(8)
-        right_column.addLayout(top_control_row)  # Top control row (RD + Reset)
-        right_column.addWidget(plot_panel)       # Plot panel below
-
-        # Create bottom layout with left column and right column
-        bottom_layout = QtWidgets.QHBoxLayout()
-        bottom_layout.setSpacing(8)
-        bottom_layout.addLayout(left_column)  # Left column (motor + read addresses)
-        bottom_layout.addLayout(right_column)  # Right column (controls + plot)
-
-        main_layout.addLayout(bottom_layout)
-
-        return root
+        # ========== STEP 3 COMPLETE: Return central widget ==========
+        # MainView.setup_ui() already set the central widget, so we return it
+        # for backward compatibility with QStackedWidget
+        return self.centralWidget()
 
     def switch_layout(self, index: int):
         """Switch to a different layout page in the stacked widget"""
@@ -3318,15 +2849,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Update UI widget
             if value is not None:
-                self.rowValues[index].setText(str(value))
-                self.rowValues[index].setStyleSheet(
+                self.rowReads[index].setText(str(value))
+                self.rowReads[index].setStyleSheet(
                     f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
                     f"padding:8px; border:2px solid {Colors.BORDER_NORMAL}; border-radius:4px; "
                     f"font-weight:600; font-size:16px;"
                 )
             else:
                 # Keep existing value but show red border to indicate error
-                self.rowValues[index].setStyleSheet(
+                self.rowReads[index].setStyleSheet(
                     f"color:{Colors.VALUE_DISPLAY_TEXT}; background:{Colors.VALUE_DISPLAY_BG}; "
                     f"padding:8px; border:2px solid {Colors.STATUS_ERROR}; border-radius:4px; "
                     f"font-weight:600; font-size:16px;"
@@ -4713,7 +4244,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 raise ValueError("Please select an address")
             addr = int(txt.split('_', 1)[0])
 
-            vtxt = self.rowEdits[index].text().strip()
+            vtxt = self.rowWrites[index].text().strip()
             if not vtxt:
                 raise ValueError("Please enter a value")
             value = int(vtxt)

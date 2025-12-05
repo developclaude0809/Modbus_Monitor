@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python -c:*)",
-      "Bash(timeout 5 python:*)"
+      "Bash(timeout 5 python:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "deny": [],
     "ask": []
