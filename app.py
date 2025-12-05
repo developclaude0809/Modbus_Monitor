@@ -40,6 +40,9 @@ from logic import (
     RRModeWorker
 )
 
+# Import view layer (Step 2: UI moved to view_v1.py - PARTIAL, 2 panels only)
+from view_v1 import MainView
+
 # ==================== DEFAULTS ====================
 # Centralized defaults for timing values (milliseconds)
 DEFAULT_TIMEOUT_MS = 40
@@ -1821,6 +1824,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Internal state for plot data (already exists as self.plot_data, reuse it)
         # self.plot_data is already defined above
 
+        # ========== STEP 2: Create MainView (View Layer) ==========
+        # MainView builds UART + Motor panels only (proof of concept)
+        self.ui = MainView(self.tokens, self)
+
         # Build UI and setup QStackedWidget
         root = self._build_ui()
 
@@ -1844,192 +1851,44 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
 
-        # ========== TOP: UART Settings Panel ==========
-        uart_panel = QtWidgets.QFrame()
-        uart_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        uart_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        uart_panel.setFixedHeight(60)
-        uart_layout = QtWidgets.QHBoxLayout(uart_panel)
-        uart_layout.setContentsMargins(12, 12, 12, 12)
-        uart_layout.setSpacing(10)
+        # ========== STEP 2: Use MainView to build UART and Motor panels ==========
+        # Build panels using View layer
+        uart_panel = self.ui._build_uart_panel(self)
+        motor_panel = self.ui._build_motor_panel(self)
 
-        # Port
-        lbl_port = QtWidgets.QLabel("COM Port")
-        lbl_port.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        uart_layout.addWidget(lbl_port)
-        self.cmbPort = SearchableCombo(half_width=False)
-        self.cmbPort.setMinimumWidth(120)
-        uart_layout.addWidget(self.cmbPort)
+        # ========== STEP 2: Re-export UI widgets (backward compatibility) ==========
+        # This allows old code (signal connections, etc.) to work without changes
+        # UART panel widgets
+        self.cmbPort = self.ui.cmbPort
+        self.cmbBaud = self.ui.cmbBaud
+        self.cmbDataBits = self.ui.cmbDataBits
+        self.cmbParity = self.ui.cmbParity
+        self.cmbStopBits = self.ui.cmbStopBits
+        self.edSlave = self.ui.edSlave
+        self.btnLoad = self.ui.btnLoad
+        self.btnRefreshPorts = self.ui.btnRefreshPorts
+        self.btnConnect = self.ui.btnConnect
 
-        # Baud
-        lbl_baud = QtWidgets.QLabel("Baud")
-        lbl_baud.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        uart_layout.addWidget(lbl_baud)
-        self.cmbBaud = SearchableCombo(half_width=False)
-        self.cmbBaud.setMinimumWidth(100)
-        for b in ['1200','2400','4800','9600','19200','38400','57600','115200']:
-            self.cmbBaud.addItem(b)
-        self.cmbBaud.setCurrentText('9600')
-        uart_layout.addWidget(self.cmbBaud)
+        # Motor panel widgets
+        self.edMotorValue = self.ui.edMotorValue
+        self.btnMotorSend = self.ui.btnMotorSend
+        self.btnMotorStop = self.ui.btnMotorStop
+        self.btnFanInfo = self.ui.btnFanInfo
+        self.btnAlarmLog = self.ui.btnAlarmLog
 
-        # Data bits
-        lbl_databits = QtWidgets.QLabel("Data Bits")
-        lbl_databits.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        uart_layout.addWidget(lbl_databits)
-        self.cmbDataBits = SearchableCombo(half_width=False)
-        self.cmbDataBits.setMinimumWidth(60)
-        self.cmbDataBits.addItems(['7','8'])
-        self.cmbDataBits.setCurrentText('8')
-        uart_layout.addWidget(self.cmbDataBits)
-
-        # Parity
-        lbl_parity = QtWidgets.QLabel("Parity")
-        lbl_parity.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        uart_layout.addWidget(lbl_parity)
-        self.cmbParity = SearchableCombo(half_width=False)
-        self.cmbParity.setMinimumWidth(100)
-        self.cmbParity.addItems(['None (N)', 'Even (E)', 'Odd (O)'])
-        self.cmbParity.setCurrentText('None (N)')
-        uart_layout.addWidget(self.cmbParity)
-
-        # Stop bits
-        lbl_stopbits = QtWidgets.QLabel("Stop Bits")
-        lbl_stopbits.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        uart_layout.addWidget(lbl_stopbits)
-        self.cmbStopBits = SearchableCombo(half_width=False)
-        self.cmbStopBits.setMinimumWidth(60)
-        self.cmbStopBits.addItems(['1','2'])
-        self.cmbStopBits.setCurrentText('1')
-        uart_layout.addWidget(self.cmbStopBits)
-
-        uart_layout.addStretch()
-
-        # Load button
-        self.btnLoad = QtWidgets.QPushButton("Load")
-        self.btnLoad.setStyleSheet(f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}")
+        # Connect signals (since View layer doesn't know about logic)
         self.btnLoad.clicked.connect(self.open_load_dialog)
-        uart_layout.addWidget(self.btnLoad)
-
-        # Refresh button
-        self.btnRefreshPorts = QtWidgets.QPushButton("Refresh")
-        self.btnRefreshPorts.setToolTip("Refresh COM ports")
-        self.btnRefreshPorts.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
         self.btnRefreshPorts.clicked.connect(self._refresh_ports)
-        uart_layout.addWidget(self.btnRefreshPorts)
-
-        # Connect button
-        self.btnConnect = QtWidgets.QPushButton("Connect")
-        self.btnConnect.setStyleSheet(f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:700; padding:8px 12px; border:none; border-radius:6px;}} QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}")
         self.btnConnect.clicked.connect(self._toggle_connection)
-        uart_layout.addWidget(self.btnConnect)
+        self.edMotorValue.returnPressed.connect(self._send_motor_value)
+        self.btnMotorSend.clicked.connect(self._send_motor_value)
+        self.btnMotorStop.clicked.connect(self._stop_motor)
+        self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
+        self.btnAlarmLog.clicked.connect(self.open_alarm_log_dialog)
 
+        # Add UART panel to main layout
         main_layout.addWidget(uart_panel)
 
-        # ========== Motor Control Panel (RESPONSIVE) ==========
-        motor_panel = QtWidgets.QFrame()
-        motor_panel.setFrameShape(QtWidgets.QFrame.StyledPanel)
-        motor_panel.setStyleSheet(f"QFrame{{background:{Colors.BG_PANEL}; border:3px solid {Colors.BORDER_PANEL}; border-radius:10px;}} QLabel{{color:{Colors.TEXT_LABEL};}}")
-        # Calculate required height: top_pad + input(40) + spacing(8) + button(40) + bottom_pad
-        # Assuming pad() returns ~10-14px, total height = 10 + 40 + 8 + 40 + 10 = 108px minimum
-        motor_panel.setMinimumSize(self.tokens.panel_minw(), 108)
-        motor_panel.setMaximumHeight(108)
-        motor_panel.setMaximumWidth(650)
-        # Fixed height to prevent expansion
-        motor_panel.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-
-        motor_main_layout = QtWidgets.QVBoxLayout(motor_panel)
-        # RESPONSIVE: Use token-based margins and spacing - reduced for compactness
-        motor_main_layout.setContentsMargins(self.tokens.pad(), self.tokens.pad(), self.tokens.pad(), self.tokens.pad())
-        motor_main_layout.setSpacing(8)  # Spacing between rows
-
-        # Top row: input box and buttons
-        motor_top_layout = QtWidgets.QHBoxLayout()
-        motor_top_layout.setSpacing(self.tokens.gap())
-
-        # Value input for motor control
-        self.edMotorValue = QtWidgets.QLineEdit()
-        self.edMotorValue.setText("0")
-        self.edMotorValue.setValidator(QtGui.QIntValidator(0, 65535, self))
-        # Reduced height for compactness
-        self.edMotorValue.setMinimumHeight(40)
-        self.edMotorValue.setMaximumHeight(40)
-        self.edMotorValue.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        # RESPONSIVE: Use token-based font size
-        self.edMotorValue.setStyleSheet(
-            f"QLineEdit{{background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; "
-            f"border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px; font-size:{self.tokens.font_large()}px; font-weight:700;}} "
-            f"QLineEdit:focus{{border-color:{Colors.BORDER_FOCUS};}}"
-        )
-        self.edMotorValue.returnPressed.connect(self._send_motor_value)
-        motor_top_layout.addWidget(self.edMotorValue)
-
-        # Send button (success style)
-        self.btnMotorSend = QtWidgets.QPushButton("Send")
-        # Reduced size for compactness
-        self.btnMotorSend.setMinimumSize(self.tokens.btn_w(), 40)
-        self.btnMotorSend.setMaximumHeight(40)
-        self.btnMotorSend.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        # RESPONSIVE: Use token-based font size
-        self.btnMotorSend.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_SUCCESS_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.BTN_SUCCESS_BG};}}"
-        )
-        self.btnMotorSend.clicked.connect(self._send_motor_value)
-        motor_top_layout.addWidget(self.btnMotorSend)
-
-        # Stop button (danger style)
-        self.btnMotorStop = QtWidgets.QPushButton("Stop")
-        # Reduced size for compactness
-        self.btnMotorStop.setMinimumSize(self.tokens.btn_w(), 40)
-        self.btnMotorStop.setMaximumHeight(40)
-        self.btnMotorStop.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        # RESPONSIVE: Use token-based font size
-        self.btnMotorStop.setStyleSheet(
-            f"QPushButton{{background:{Colors.BTN_DANGER_BG}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.BTN_DANGER_BG};}}"
-        )
-        self.btnMotorStop.clicked.connect(self._stop_motor)
-        motor_top_layout.addWidget(self.btnMotorStop)
-
-        motor_main_layout.addLayout(motor_top_layout)
-
-        # Bottom row: Fan Info and Alarm Log buttons
-        motor_bottom_layout = QtWidgets.QHBoxLayout()
-        motor_bottom_layout.setSpacing(self.tokens.gap())
-
-        # Fan Info button
-        self.btnFanInfo = QtWidgets.QPushButton("Fan Info.")
-        self.btnFanInfo.setMinimumHeight(40)
-        self.btnFanInfo.setMaximumHeight(40)
-        self.btnFanInfo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.btnFanInfo.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
-        self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
-        motor_bottom_layout.addWidget(self.btnFanInfo)
-
-        # Alarm Log button
-        self.btnAlarmLog = QtWidgets.QPushButton("Alarm Log")
-        self.btnAlarmLog.setMinimumHeight(40)
-        self.btnAlarmLog.setMaximumHeight(40)
-        self.btnAlarmLog.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.btnAlarmLog.setStyleSheet(
-            f"QPushButton{{background:{Colors.MIDNIGHT_OCEAN}; color:{Colors.BTN_TEXT_COLOR}; font-weight:600; font-size:{self.tokens.font_xlarge()}px; padding:4px 12px; border:none; border-radius:6px;}} "
-            f"QPushButton:hover{{background:{Colors.AKAKUCHIBA};}} "
-            f"QPushButton:pressed{{background:{Colors.MIDNIGHT_OCEAN};}}"
-        )
-        self.btnAlarmLog.clicked.connect(self.open_alarm_log_dialog)
-        motor_bottom_layout.addWidget(self.btnAlarmLog)
-
-        motor_main_layout.addLayout(motor_bottom_layout)
 
         # ========== Read Addresses Panel ==========
         RWpanel = QtWidgets.QFrame()
@@ -2061,18 +1920,6 @@ class MainWindow(QtWidgets.QMainWindow):
         LABEL_WIDTH = 80
         INPUT_WIDTH = 70
 
-        # Slave ID (moved to UART panel after COM Port)
-        lblSlave = QtWidgets.QLabel("ID")
-        lblSlave.setFixedWidth(LABEL_WIDTH)
-        lblSlave.setAlignment(QtCore.Qt.AlignCenter)
-        lblSlave.setStyleSheet(f"color:{Colors.TEXT_LABEL}; font-weight:700;")
-        self.edSlave = QtWidgets.QLineEdit("1")
-        self.edSlave.setValidator(QtGui.QIntValidator(1, 247, self))
-        self.edSlave.setFixedWidth(INPUT_WIDTH)
-        self.edSlave.setStyleSheet(f"background:{Colors.BG_INPUT}; color:{Colors.TEXT_PRIMARY}; border:2px solid {Colors.BORDER_NORMAL}; padding:4px; border-radius:4px;")
-        # Insert into UART layout right after COM Port widgets
-        uart_layout.insertWidget(2, lblSlave)
-        uart_layout.insertWidget(3, self.edSlave)
 
         # Timeout and Poll defaults (ms) from centralized variables
         self.edTimeout = QtWidgets.QLineEdit(str(DEFAULT_TIMEOUT_MS))

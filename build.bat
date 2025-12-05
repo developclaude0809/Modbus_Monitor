@@ -4,6 +4,8 @@ if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
 REM --- Build with MSVC (no clang) ---
+REM Note: app.py automatically includes logic.py, view_v1.py, and theme.py via imports
+REM       No need to explicitly include them - Nuitka follows imports automatically
 python -m nuitka app.py ^
   --onefile ^
   --windows-disable-console ^
