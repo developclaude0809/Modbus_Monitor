@@ -40,8 +40,9 @@ from logic import (
     RRModeWorker
 )
 
-# Import view layer (Step 2: UI moved to view_v1.py - PARTIAL, 2 panels only)
-from view_v1 import MainView
+# Import view layers (Step 2: UI moved to view files)
+from view_v1 import MainView as MainView_V1
+from view_v2 import MainView as MainView_V2
 
 # ==================== DEFAULTS ====================
 # Centralized defaults for timing values (milliseconds)
@@ -1755,6 +1756,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mode state for 0x04 register definition switching
         self.mode = "Normal"
 
+        # View switching state
+        self.current_view = "v1"  # "v1" or "v2"
+
         # Dictionary to store all 5 04def filenames (keyed by mode name)
         self.file_04_dict = {
             "Normal": "",
@@ -1825,8 +1829,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.plot_data is already defined above
 
         # ========== STEP 2: Create MainView (View Layer) ==========
-        # MainView builds UART + Motor panels only (proof of concept)
-        self.ui = MainView(self.tokens, self)
+        # Create the appropriate view based on current_view setting
+        if self.current_view == "v2":
+            self.ui = MainView_V2(self.tokens, self)
+        else:
+            self.ui = MainView_V1(self.tokens, self)
 
         # Build UI and setup QStackedWidget
         root = self._build_ui()
@@ -1895,19 +1902,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btnReset = self.ui.btnReset
         self.btnResetDef = self.ui.btnResetDef
 
-        # Plot panel widgets
-        self.plotLabels = self.ui.plotLabels
-        self.plotCombos = self.ui.plotCombos
-        self.probeValueLabels = self.ui.probeValueLabels
-        self.btnModeSwitch = self.ui.btnModeSwitch
-        self.cmbRRPage = self.ui.cmbRRPage
-        self.btnLoadDtbpt = self.ui.btnLoadDtbpt
-        self.btnDraw = self.ui.btnDraw
-        self.plot_figure = self.ui.plot_figure
-        self.plot_canvas = self.ui.plot_canvas
-        self.plot_ax = self.ui.plot_ax
-        self.plot_lines = self.ui.plot_lines
-        self.plot_toolbar = self.ui.plot_toolbar
+        # Plot panel widgets (only in v1)
+        if hasattr(self.ui, 'plotLabels'):
+            self.plotLabels = self.ui.plotLabels
+            self.plotCombos = self.ui.plotCombos
+            self.probeValueLabels = self.ui.probeValueLabels
+            self.btnModeSwitch = self.ui.btnModeSwitch
+            self.cmbRRPage = self.ui.cmbRRPage
+            self.btnLoadDtbpt = self.ui.btnLoadDtbpt
+            self.btnDraw = self.ui.btnDraw
+            self.plot_figure = self.ui.plot_figure
+            self.plot_canvas = self.ui.plot_canvas
+            self.plot_ax = self.ui.plot_ax
+            self.plot_lines = self.ui.plot_lines
+            self.plot_toolbar = self.ui.plot_toolbar
+        else:
+            # V2 view - set dummy values
+            self.plotLabels = []
+            self.plotCombos = []
+            self.probeValueLabels = []
+            self.btnModeSwitch = None
+            self.cmbRRPage = None
+            self.btnLoadDtbpt = None
+            self.btnDraw = None
+            self.plot_figure = None
+            self.plot_canvas = None
+            self.plot_ax = None
+            self.plot_lines = []
+            self.plot_toolbar = None
 
         # Status bar
         self.status = self.ui.status
@@ -1948,80 +1970,81 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ui.reset_panel.sig_reset_clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
         self.ui.reset_panel.sig_reset_def_clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
 
-        # Plot panel signals (panel-level)
-        self.ui.plot_panel.sig_channel_label_clicked.connect(self._toggle_plot_channel)
-        self.ui.plot_panel.sig_mode_switch_clicked.connect(self._toggle_mode)
-        self.cmbRRPage.currentIndexChanged.connect(self._on_rr_page_changed)
-        self.ui.plot_panel.sig_load_dtbpt_clicked.connect(self._load_dtbpt_file)
-        self.ui.plot_panel.sig_draw_clicked.connect(self._toggle_plotting)
-
-        # ========== STEP 3: Setup matplotlib plot tools ==========
-        # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save
-        self._filter_toolbar_buttons()
-
-        # FIXED: Override Home button to auto-fit current data instead of restoring empty view
-        try:
-            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
-                # Find the Home action in the toolbar
-                for action in self.plot_toolbar.actions():
-                    action_text = action.text().replace('&', '')  # Remove mnemonic
-                    if action_text == 'Home':
-                        # Disconnect default behavior
-                        try:
-                            action.triggered.disconnect()
-                        except TypeError:
-                            pass  # No connections to disconnect
-                        # Connect our custom behavior
-                        action.triggered.connect(self._on_home_clicked)
-                        break
-        except Exception:
-            pass
-
-        # Override Save button to auto-save to log folder and change text to PNG
+        # Initialize PNG save action reference
         self._png_save_action = None
-        try:
-            if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
-                # Find the Save action in the toolbar
-                for action in self.plot_toolbar.actions():
-                    action_text = action.text().replace('&', '')  # Remove mnemonic
-                    if action_text == 'Save':
-                        # Disconnect default behavior
-                        try:
-                            action.triggered.disconnect()
-                        except TypeError:
-                            pass  # No connections to disconnect
-                        # Connect our custom auto-save behavior
-                        action.triggered.connect(self._auto_save_plot_to_log)
-                        # Change button text to "PNG"
-                        action.setText("PNG")
-                        action.setToolTip("Export plot data to PNG file")
-                        # Store reference for later styling
-                        self._png_save_action = action
-                        break
-        except Exception:
-            pass
 
-        # Cursor tool removed
+        # Plot panel signals (panel-level, only in v1)
+        if hasattr(self.ui, 'plot_panel'):
+            self.ui.plot_panel.sig_channel_label_clicked.connect(self._toggle_plot_channel)
+            self.ui.plot_panel.sig_mode_switch_clicked.connect(self._toggle_mode)
+            self.cmbRRPage.currentIndexChanged.connect(self._on_rr_page_changed)
+            self.ui.plot_panel.sig_load_dtbpt_clicked.connect(self._load_dtbpt_file)
+            self.ui.plot_panel.sig_draw_clicked.connect(self._toggle_plotting)
 
-        # Add probe tool button to toolbar
-        self._add_probe_button()
+            # ========== STEP 3: Setup matplotlib plot tools (v1 only) ==========
+            # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save
+            self._filter_toolbar_buttons()
 
-        # Add X-Y axis limits button to toolbar
-        self._add_axis_limits_button()
+            # FIXED: Override Home button to auto-fit current data instead of restoring empty view
+            try:
+                if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                    # Find the Home action in the toolbar
+                    for action in self.plot_toolbar.actions():
+                        action_text = action.text().replace('&', '')  # Remove mnemonic
+                        if action_text == 'Home':
+                            # Disconnect default behavior
+                            try:
+                                action.triggered.disconnect()
+                            except TypeError:
+                                pass  # No connections to disconnect
+                            # Connect our custom behavior
+                            action.triggered.connect(self._on_home_clicked)
+                            break
+            except Exception:
+                pass
 
-        # Add channel toggle buttons to toolbar
-        self._add_channel_toggle_buttons()
+            # Override Save button to auto-save to log folder and change text to PNG
+            try:
+                if hasattr(self, "plot_toolbar") and self.plot_toolbar is not None:
+                    # Find the Save action in the toolbar
+                    for action in self.plot_toolbar.actions():
+                        action_text = action.text().replace('&', '')  # Remove mnemonic
+                        if action_text == 'Save':
+                            # Disconnect default behavior
+                            try:
+                                action.triggered.disconnect()
+                            except TypeError:
+                                pass  # No connections to disconnect
+                            # Connect our custom auto-save behavior
+                            action.triggered.connect(self._auto_save_plot_to_log)
+                            # Change button text to "PNG"
+                            action.setText("PNG")
+                            action.setToolTip("Export plot data to PNG file")
+                            # Store reference for later styling
+                            self._png_save_action = action
+                            break
+            except Exception:
+                pass
 
-        # Move Save button and add CSV button after channel toggles
-        self._reorder_save_buttons()
-        self._add_save_data_button()
+            # Add probe tool button to toolbar
+            self._add_probe_button()
 
-        # Apply text-only style to PNG button
-        if self._png_save_action is not None:
-            self._ensure_action_text_only(self._png_save_action)
+            # Add X-Y axis limits button to toolbar
+            self._add_axis_limits_button()
 
-        # Connect interactive zoom events after canvas creation
-        self._connect_plot_events()
+            # Add channel visibility toggle buttons to toolbar
+            self._add_channel_toggle_buttons()
+
+            # Move Save button and add CSV button after channel toggles
+            self._reorder_save_buttons()
+            self._add_save_data_button()
+
+            # Apply text-only style to PNG button
+            if self._png_save_action is not None:
+                self._ensure_action_text_only(self._png_save_action)
+
+            # Connect interactive zoom events after canvas creation
+            self._connect_plot_events()
 
         # ========== STEP 3 COMPLETE: Return central widget ==========
         # MainView.setup_ui() already set the central widget, so we return it
@@ -3021,6 +3044,10 @@ class MainWindow(QtWidgets.QMainWindow):
             is_drawing: True if plotting is active, False otherwise
             mode: Current mode ("03" or "RR")
         """
+        # Skip if in v2 mode (no draw button)
+        if not self.btnDraw:
+            return
+
         if is_drawing:
             self.btnDraw.setText("Stop")
             self.btnDraw.setStyleSheet(
@@ -4275,6 +4302,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------- Plotting ----------
     def _toggle_plotting(self):
         """Toggle real-time plotting (mode-aware)"""
+        # Skip if in v2 mode (no plot panel)
+        if not self.plot_canvas:
+            return
+
         if self.current_mode == "03":
             # 03 Mode plotting
             if self.plot_worker and self.plot_worker.isRunning():
@@ -4290,6 +4321,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _start_plotting(self):
         """Start real-time plotting"""
+        # Skip if in v2 mode (no plot panel)
+        if not self.plot_canvas or not self.plotCombos:
+            return
+
         if not self.serial_mgr.connected:
             QtWidgets.QMessageBox.warning(self, "Not Connected", "Please connect to a serial port first")
             return
@@ -4372,6 +4407,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _switch_to_rr_mode(self):
         """Switch from 03 Mode to RR Mode"""
+        # Skip if in v2 mode (no RR support)
+        if not self.btnModeSwitch or not self.cmbRRPage:
+            return
+
         # Stop any active polling or plotting
         if self.worker and self.worker.isRunning():
             self._stop_polling()
@@ -4402,6 +4441,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _switch_to_03_mode(self):
         """Switch from RR Mode to 03 Mode"""
+        # Skip if in v2 mode (no RR support)
+        if not self.btnModeSwitch or not self.cmbRRPage:
+            return
+
         # Stop RR worker if running
         if self.rr_worker and self.rr_worker.isRunning():
             self._stop_rr_mode()
@@ -4610,6 +4653,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_plot(self):
         """Redraw the plot with current data"""
+        # Skip if in v2 mode (no plot panel)
+        if not self.plot_canvas or not self.plot_lines:
+            return
+
         try:
             for i, line in enumerate(self.plot_lines):
                 times = self.plot_data[i]['time']
@@ -4699,6 +4746,78 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status("View reset to auto-fit current data")
         except Exception as e:
             self._set_status(f"Home reset failed: {e}")
+
+    # ---------- View Switching ----------
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        """Handle keyboard shortcuts"""
+        if event.key() == QtCore.Qt.Key_F9:
+            self._switch_view()
+        else:
+            super().keyPressEvent(event)
+
+    def _switch_view(self):
+        """Switch between v1 and v2 views (triggered by F9)"""
+        try:
+            # Stop all workers before switching
+            if self.worker and self.worker.isRunning():
+                self._stop_polling()
+
+            if self.plot_worker and self.plot_worker.isRunning():
+                self._stop_plotting()
+
+            if self.rr_worker and self.rr_worker.isRunning():
+                self._stop_rr_mode()
+
+            # Toggle view
+            self.current_view = "v2" if self.current_view == "v1" else "v1"
+
+            # Store current state
+            current_port = self.cmbPort.currentText() if hasattr(self, 'cmbPort') and self.cmbPort else None
+            is_connected = self.serial_mgr.connected
+
+            # Close serial connection
+            if is_connected:
+                self.serial_mgr.disconnect_port()
+
+            # Store old widget reference before creating new view
+            old_widget = self.centralWidget()
+
+            # Recreate view
+            if self.current_view == "v2":
+                self.ui = MainView_V2(self.tokens, self)
+            else:
+                self.ui = MainView_V1(self.tokens, self)
+
+            # Rebuild UI (this sets the central widget via setup_ui)
+            self._build_ui()
+
+            # Delete old widget
+            if old_widget:
+                old_widget.deleteLater()
+
+            # Force window update
+            self.update()
+            QtWidgets.QApplication.processEvents()
+
+            # Restore state
+            self._refresh_ports()
+            if current_port:
+                idx = self.cmbPort.findText(current_port)
+                if idx >= 0:
+                    self.cmbPort.setCurrentIndex(idx)
+
+            # Reload definitions
+            self._auto_load_definitions()
+            self._update_input_titles()
+            self._load_03_memory_addresses()
+
+            # Show status
+            view_name = "Full View (with Plot & RR)" if self.current_view == "v1" else "Compact View (no Plot/RR)"
+            self._set_status(f"Switched to {view_name}")
+        except Exception as e:
+            self._set_status(f"View switch failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ---------- Close ----------
     def closeEvent(self, e: QtGui.QCloseEvent):
