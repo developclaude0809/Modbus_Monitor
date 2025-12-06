@@ -1912,48 +1912,48 @@ class MainWindow(QtWidgets.QMainWindow):
         # Status bar
         self.status = self.ui.status
 
-        # ========== STEP 3: Connect ALL signal handlers ==========
-        # View layer doesn't know about logic, so MainWindow connects signals to handlers
+        # ========== STEP 5: Connect panel semantic signals to controller methods ==========
+        # UI (panels) → Controller (MainWindow) → Logic layer (SerialManager, workers)
+        # This implements clean MVC/MVP separation with semantic signals
 
-        # UART panel signals
-        self.btnLoad.clicked.connect(self.open_load_dialog)
-        self.btnRefreshPorts.clicked.connect(self._refresh_ports)
-        self.btnConnect.clicked.connect(self._toggle_connection)
+        # UART panel signals (panel-level)
+        self.ui.uart_panel.sig_load_clicked.connect(self.open_load_dialog)
+        self.ui.uart_panel.sig_refresh_clicked.connect(self._refresh_ports)
+        self.ui.uart_panel.sig_connect_clicked.connect(self._toggle_connection)
 
-        # Motor panel signals
+        # Motor panel signals (panel-level for buttons, widget-level for input)
         self.edMotorValue.returnPressed.connect(self._send_motor_value)
-        self.btnMotorSend.clicked.connect(self._send_motor_value)
-        self.btnMotorStop.clicked.connect(self._stop_motor)
-        self.btnFanInfo.clicked.connect(self.open_device_info_dialog)
-        self.btnAlarmLog.clicked.connect(self.open_alarm_log_dialog)
+        self.ui.motor_panel.sig_send_clicked.connect(self._send_motor_value)
+        self.ui.motor_panel.sig_stop_clicked.connect(self._stop_motor)
+        self.ui.motor_panel.sig_fan_info_clicked.connect(self.open_device_info_dialog)
+        self.ui.motor_panel.sig_alarm_log_clicked.connect(self.open_alarm_log_dialog)
 
-        # Polling panel signals
-        self.btnPolling.clicked.connect(self._toggle_polling)
+        # RW panel signals (panel-level for polling button, widget-level for inputs)
+        self.ui.rw_panel.sig_polling_clicked.connect(self._toggle_polling)
         self.edTimeout.editingFinished.connect(self._on_timeout_changed)
         self.edPoll.editingFinished.connect(self._on_poll_changed)
 
-        # Register grid: Write on Enter, auto-save on address change
+        # Register grid: Write on Enter, auto-save on address change (widget-level)
         for i, edit in enumerate(self.rowWrites):
             edit.returnPressed.connect(lambda idx=i: self._write_register(idx))
         for combo in self.rowCombos:
             combo.currentIndexChanged.connect(self._trigger_03_autosave)
 
-        # RD panel signals
-        self.btnNormal.clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
-        self.btnBypass.clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
-        self.btnSwitch.clicked.connect(self._send_switch_command)
+        # RD panel signals (panel-level)
+        self.ui.rd_panel.sig_normal_clicked.connect(lambda: self._send_rd_command("014600070001020000", "Normal"))
+        self.ui.rd_panel.sig_bypass_clicked.connect(lambda: self._send_rd_command("014600070001022308", "Bypass"))
+        self.ui.rd_panel.sig_switch_clicked.connect(self._send_switch_command)
 
-        # Reset panel signals
-        self.btnReset.clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
-        self.btnResetDef.clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
+        # Reset panel signals (panel-level)
+        self.ui.reset_panel.sig_reset_clicked.connect(lambda: self._send_reset_command("010601040001", "Reset"))
+        self.ui.reset_panel.sig_reset_def_clicked.connect(lambda: self._send_reset_command("010601040002", "Reset Def"))
 
-        # Plot panel signals
-        for i, lbl in enumerate(self.plotLabels):
-            lbl.clicked.connect(lambda idx=i: self._toggle_plot_channel(idx))
-        self.btnModeSwitch.clicked.connect(self._toggle_mode)
+        # Plot panel signals (panel-level)
+        self.ui.plot_panel.sig_channel_label_clicked.connect(self._toggle_plot_channel)
+        self.ui.plot_panel.sig_mode_switch_clicked.connect(self._toggle_mode)
         self.cmbRRPage.currentIndexChanged.connect(self._on_rr_page_changed)
-        self.btnLoadDtbpt.clicked.connect(self._load_dtbpt_file)
-        self.btnDraw.clicked.connect(self._toggle_plotting)
+        self.ui.plot_panel.sig_load_dtbpt_clicked.connect(self._load_dtbpt_file)
+        self.ui.plot_panel.sig_draw_clicked.connect(self._toggle_plotting)
 
         # ========== STEP 3: Setup matplotlib plot tools ==========
         # Filter toolbar buttons: keep only Home, Pan, Zoom, Customize, and Save

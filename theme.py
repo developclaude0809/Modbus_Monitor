@@ -81,27 +81,84 @@ def clamp(v, lo, hi):
 
 
 class UiTokens:
-    """UI sizing and spacing tokens with scale support"""
+    """Unified design tokens for consistent UI sizing and responsive layout"""
 
     def __init__(self, scale: float):
         self.scale = scale
         self.s = clamp(scale, 0.9, 1.15)
 
     def btn_h(self):
-        """Button height"""
+        """Standard button height - scales with display"""
         return int(clamp(36 * self.s, 32, 44))
 
+    def btn_h_large(self):
+        """Large button height for prominent controls (motor, reset panels)"""
+        return int(clamp(50 * self.s, 42, 58))
+
     def btn_w(self):
-        """Button width"""
-        return int(clamp(110 * self.s, 95, 140))
+        """Standard button minimum width - responsive"""
+        return int(clamp(120 * self.s, 100, 140))
+
+    def input_h(self):
+        """Input field height"""
+        return int(clamp(34 * self.s, 30, 42))
+
+    def input_h_large(self):
+        """Large input field height for prominent inputs"""
+        return int(clamp(50 * self.s, 42, 58))
+
+    def pad(self):
+        """Padding size"""
+        return int(clamp(10 * self.s, 8, 14))
 
     def padding(self):
-        """Standard padding"""
+        """Standard padding (alias for pad)"""
+        return self.pad()
+
+    def gap(self):
+        """Gap/spacing size"""
         return int(clamp(8 * self.s, 6, 12))
 
     def radius(self):
         """Border radius"""
         return int(clamp(8 * self.s, 6, 12))
+
+    def icon(self):
+        """Icon size"""
+        return int(clamp(20 * self.s, 16, 24))
+
+    def panel_minw(self):
+        """Panel minimum width"""
+        return int(clamp(520 * self.s, 460, 640))
+
+    def panel_h_control(self):
+        """Control panel minimum height (RD, Reset panels)"""
+        return int(clamp(80 * self.s, 70, 95))
+
+    def combo_w(self):
+        """Combo box minimum width"""
+        return int(clamp(140 * self.s, 120, 160))
+
+    # Font size tokens - scale with display DPI
+    def font_small(self):
+        """Small font size (10px base)"""
+        return int(clamp(10 * self.s, 9, 12))
+
+    def font_normal(self):
+        """Normal font size (14px base)"""
+        return int(clamp(14 * self.s, 12, 16))
+
+    def font_medium(self):
+        """Medium font size (16px base)"""
+        return int(clamp(16 * self.s, 14, 18))
+
+    def font_large(self):
+        """Large font size (22px base - for combo/inputs)"""
+        return int(clamp(22 * self.s, 19, 26))
+
+    def font_xlarge(self):
+        """Extra large font size (24-26px base - for prominent buttons)"""
+        return int(clamp(25 * self.s, 22, 29))
 
 
 def apply_stylesheet(app):
