@@ -41,8 +41,9 @@ from logic import (
 )
 
 # Import view layers (Step 2: UI moved to view files)
-from view_v1 import MainView as MainView_V1
-from view_v2 import MainView as MainView_V2
+# V1 is now the compact view (no Plot/RR), V2 is the full view
+from view_v2 import MainView as MainView_V1  # Compact view
+from view_v1 import MainView as MainView_V2  # Full view with Plot/RR
 
 # ==================== DEFAULTS ====================
 # Centralized defaults for timing values (milliseconds)
@@ -4808,8 +4809,8 @@ class MainWindow(QtWidgets.QMainWindow):
             layout_min_width = min_size.width()
             layout_min_height = min_size.height()
 
-            if self.current_view == "v2":
-                # V2 Compact View - narrower width
+            if self.current_view == "v1":
+                # V1 Compact View - narrower width
                 if sw <= 1920:
                     target_width = max(layout_min_width, int(sw * 0.60))
                     target_height = max(layout_min_height, int(sh * 0.70))
@@ -4819,7 +4820,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 target_width = min(target_width, 850)
                 target_height = min(target_height, 1050)
             else:
-                # V1 Full View - wider to accommodate Plot and RR panels
+                # V2 Full View - wider to accommodate Plot and RR panels
                 if sw <= 1920:
                     target_width = max(layout_min_width, int(sw * 0.80))
                     target_height = max(layout_min_height, int(sh * 0.70))
@@ -4845,7 +4846,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._load_03_memory_addresses()
 
             # Show status
-            view_name = "Full View (with Plot & RR)" if self.current_view == "v1" else "Compact View (no Plot/RR)"
+            view_name = "Compact View (no Plot/RR)" if self.current_view == "v1" else "Full View (with Plot & RR)"
             self._set_status(f"Switched to {view_name}")
         except Exception as e:
             self._set_status(f"View switch failed: {e}")
@@ -5021,9 +5022,9 @@ def main():
     layout_min_height = min_size.height()
 
     # Calculate target size based on screen, but respect layout minimum
-    # V2 view is more compact (no Plot/RR panels), so use smaller width
-    if w.current_view == "v2":
-        # V2 Compact View - narrower width
+    # V1 view is now the compact view (no Plot/RR panels), so use smaller width
+    if w.current_view == "v1":
+        # V1 Compact View - narrower width
         if sw <= 1920:
             # Smaller screens (1920x1080): use 60% screen width, 70% height
             target_width = max(layout_min_width, int(sw * 0.60))
@@ -5032,11 +5033,11 @@ def main():
             # Larger screens (2560x1440+): use 50% screen width, 65% height
             target_width = max(layout_min_width, int(sw * 0.50))
             target_height = max(layout_min_height, int(sh * 0.65))
-        # Clamp to reasonable maximum for v2
-        target_width = min(target_width, 1200)
+        # Clamp to reasonable maximum for v1
+        target_width = min(target_width, 850)
         target_height = min(target_height, 1050)
     else:
-        # V1 Full View - wider to accommodate Plot and RR panels
+        # V2 Full View - wider to accommodate Plot and RR panels
         if sw <= 1920:
             # Smaller screens (1920x1080): try to use 80% screen width, 70% height
             target_width = max(layout_min_width, int(sw * 0.80))
@@ -5045,7 +5046,7 @@ def main():
             # Larger screens (2560x1440+): use 65% screen width, 65% height
             target_width = max(layout_min_width, int(sw * 0.65))
             target_height = max(layout_min_height, int(sh * 0.65))
-        # Clamp to reasonable maximum for v1
+        # Clamp to reasonable maximum for v2
         target_width = min(target_width, 1800)
         target_height = min(target_height, 1050)
 
