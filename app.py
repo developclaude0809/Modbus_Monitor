@@ -4799,6 +4799,39 @@ class MainWindow(QtWidgets.QMainWindow):
             self.update()
             QtWidgets.QApplication.processEvents()
 
+            # Resize window to fit the new view
+            screen = QtWidgets.QApplication.primaryScreen()
+            geom = screen.availableGeometry()
+            sw, sh = geom.width(), geom.height()
+
+            min_size = self.minimumSizeHint()
+            layout_min_width = min_size.width()
+            layout_min_height = min_size.height()
+
+            if self.current_view == "v2":
+                # V2 Compact View - narrower width
+                if sw <= 1920:
+                    target_width = max(layout_min_width, int(sw * 0.60))
+                    target_height = max(layout_min_height, int(sh * 0.70))
+                else:
+                    target_width = max(layout_min_width, int(sw * 0.50))
+                    target_height = max(layout_min_height, int(sh * 0.65))
+                target_width = min(target_width, 850)
+                target_height = min(target_height, 1050)
+            else:
+                # V1 Full View - wider to accommodate Plot and RR panels
+                if sw <= 1920:
+                    target_width = max(layout_min_width, int(sw * 0.80))
+                    target_height = max(layout_min_height, int(sh * 0.70))
+                else:
+                    target_width = max(layout_min_width, int(sw * 0.65))
+                    target_height = max(layout_min_height, int(sh * 0.65))
+                target_width = min(target_width, 1800)
+                target_height = min(target_height, 1050)
+
+            self.resize(target_width, target_height)
+            self.center_on_screen()
+
             # Restore state
             self._refresh_ports()
             if current_port:
@@ -4988,18 +5021,33 @@ def main():
     layout_min_height = min_size.height()
 
     # Calculate target size based on screen, but respect layout minimum
-    if sw <= 1920:
-        # Smaller screens (1920x1080): try to use 80% screen width, 70% height
-        target_width = max(layout_min_width, int(sw * 0.80))
-        target_height = max(layout_min_height, int(sh * 0.70))
+    # V2 view is more compact (no Plot/RR panels), so use smaller width
+    if w.current_view == "v2":
+        # V2 Compact View - narrower width
+        if sw <= 1920:
+            # Smaller screens (1920x1080): use 60% screen width, 70% height
+            target_width = max(layout_min_width, int(sw * 0.60))
+            target_height = max(layout_min_height, int(sh * 0.70))
+        else:
+            # Larger screens (2560x1440+): use 50% screen width, 65% height
+            target_width = max(layout_min_width, int(sw * 0.50))
+            target_height = max(layout_min_height, int(sh * 0.65))
+        # Clamp to reasonable maximum for v2
+        target_width = min(target_width, 1200)
+        target_height = min(target_height, 1050)
     else:
-        # Larger screens (2560x1440+): use 65% screen width, 65% height
-        target_width = max(layout_min_width, int(sw * 0.65))
-        target_height = max(layout_min_height, int(sh * 0.65))
-
-    # Clamp to reasonable maximum to prevent oversized windows
-    target_width = min(target_width, 1800)
-    target_height = min(target_height, 1050)
+        # V1 Full View - wider to accommodate Plot and RR panels
+        if sw <= 1920:
+            # Smaller screens (1920x1080): try to use 80% screen width, 70% height
+            target_width = max(layout_min_width, int(sw * 0.80))
+            target_height = max(layout_min_height, int(sh * 0.70))
+        else:
+            # Larger screens (2560x1440+): use 65% screen width, 65% height
+            target_width = max(layout_min_width, int(sw * 0.65))
+            target_height = max(layout_min_height, int(sh * 0.65))
+        # Clamp to reasonable maximum for v1
+        target_width = min(target_width, 1800)
+        target_height = min(target_height, 1050)
 
     w.resize(target_width, target_height)
 
