@@ -4150,6 +4150,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.stop()
             self.worker.wait(1500)
             self.worker = None
+
+        # Clear serial buffers after stopping to prevent stale data
+        if self.serial_mgr.connected and self.serial_mgr.port:
+            try:
+                time.sleep(0.05)  # Let any in-flight responses complete
+                self.serial_mgr.port.reset_input_buffer()
+                self.serial_mgr.port.reset_output_buffer()
+            except Exception:
+                pass
+
         # Reset input register displays using centralized function
         self.reset_04_values()
         self.update_polling_button(False)

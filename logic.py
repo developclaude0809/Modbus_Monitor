@@ -511,6 +511,9 @@ class PollWorker(QtCore.QThread):
 
     def run(self):
         """Main polling loop"""
+        # Short delay on startup to ensure clean serial state after restart
+        time.sleep(0.1)
+
         while self._running:
             try:
                 slave_id, timeout, interval = self.get_cfg()
